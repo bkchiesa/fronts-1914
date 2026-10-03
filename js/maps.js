@@ -1,345 +1,318 @@
-/* Hex maps for Fronts, 1914 - simplified but recognizable geography */
-window.Maps = (function () {
-  const { key } = Hex;
-
-  function blank(w, h, fill) {
-    const cells = {};
+/* Hand-authored hex maps for Fronts, 1914. No DOM. */
+(function (factory) {
+  const api = factory();
+  if (typeof module !== "undefined" && module.exports) module.exports = api;
+  if (typeof window !== "undefined") window.Maps = api;
+})(function () {
+  function fromRows(rows) {
+    const h = rows.length;
+    const w = rows[0].length;
+    const cells = [];
+    const code = {
+      ".": "plains",
+      "F": "forest",
+      "M": "mountain",
+      "H": "hills",
+      "W": "water",
+      "T": "trench",
+      "D": "desert",
+      "S": "swamp"
+    };
     for (let r = 0; r < h; r++) {
+      if (rows[r].length !== w) throw new Error("Row " + r + " width " + rows[r].length + " != " + w);
       for (let q = 0; q < w; q++) {
-        cells[key(q, r)] = { q, r, terrain: fill || "plains", city: null };
+        const ch = rows[r].charAt(q);
+        const terrain = code[ch];
+        if (!terrain) throw new Error("Bad terrain '" + ch + "' at " + q + "," + r);
+        cells.push({ q: q, r: r, terrain: terrain, city: null });
       }
     }
-    return { w, h, cells };
+    return { w: w, h: h, cells: cells };
   }
 
-  function setT(m, q, r, t) {
-    const c = m.cells[key(q, r)];
-    if (c) c.terrain = t;
+  function at(map, q, r) {
+    return map.cells[r * map.w + q];
   }
-  function setCity(m, q, r, nation, name, isCapital) {
-    const c = m.cells[key(q, r)];
-    if (!c) return;
-    c.city = { nation, name, capital: !!isCapital, level: isCapital ? 2 : 1 };
+
+  function put(map, q, r, terrain) {
+    const c = at(map, q, r);
+    if (!c) throw new Error("off map " + q + "," + r);
+    c.terrain = terrain;
+  }
+
+  function city(map, q, r, owner, name, capital) {
+    const c = at(map, q, r);
+    if (!c) throw new Error("city off map " + name);
     if (c.terrain === "water") c.terrain = "plains";
+    c.city = { owner: owner, name: name, capital: !!capital };
   }
-  function paintRect(m, q0, r0, q1, r1, t) {
-    for (let r = r0; r <= r1; r++)
-      for (let q = q0; q <= q1; q++) setT(m, q, r, t);
-  }
-  function paintDisk(m, cq, cr, rad, t) {
-    for (let r = cr - rad; r <= cr + rad; r++)
+
+  function disk(map, cq, cr, rad, terrain) {
+    for (let r = cr - rad; r <= cr + rad; r++) {
       for (let q = cq - rad; q <= cq + rad; q++) {
-        if (Hex.dist({ q, r }, { q: cq, r: cr }) <= rad) setT(m, q, r, t);
+        if (r < 0 || q < 0 || r >= map.h || q >= map.w) continue;
+        const dq = q - cq, dr = r - cr, ds = -dq - dr;
+        const dist = (Math.abs(dq) + Math.abs(dr) + Math.abs(ds)) / 2;
+        if (dist <= rad) put(map, q, r, terrain);
       }
-  }
-
-  /* ---------- EUROPE 1914 ---------- */
-  function europe1914() {
-    const W = 28, H = 18;
-    const m = blank(W, H, "plains");
-    // Atlantic / North Sea / Med / Black Sea water regions
-    paintRect(m, 0, 0, 4, 7, "water");   // Atlantic west Britain
-    paintRect(m, 0, 0, 10, 2, "water");   // North Sea north
-    paintRect(m, 5, 0, 12, 3, "water");
-    paintRect(m, 0, 10, 6, 17, "water");  // Bay of Biscay / Atlantic SW
-    paintRect(m, 7, 14, 20, 17, "water"); // Mediterranean
-    paintRect(m, 21, 12, 27, 17, "water"); // Aegean / East Med
-    paintRect(m, 24, 6, 27, 10, "water"); // Black Sea
-    // Irish Sea / Channel
-    for (let q = 3; q <= 8; q++) setT(m, q, 5, "water");
-    for (let q = 4; q <= 9; q++) setT(m, q, 6, "water");
-    // Baltic
-    paintRect(m, 14, 0, 20, 2, "water");
-    paintRect(m, 16, 2, 19, 3, "water");
-    // Britain island (land on water backdrop)
-    paintDisk(m, 4, 3, 2, "plains");
-    paintDisk(m, 5, 4, 1, "hills");
-    setT(m, 3, 2, "plains"); setT(m, 4, 2, "plains"); setT(m, 5, 2, "plains");
-    setT(m, 3, 3, "plains"); setT(m, 4, 3, "plains"); setT(m, 5, 3, "hills");
-    setT(m, 3, 4, "plains"); setT(m, 4, 4, "plains");
-    // Ireland
-    setT(m, 1, 3, "plains"); setT(m, 1, 4, "plains"); setT(m, 2, 3, "hills");
-    // Scandinavia edge
-    paintRect(m, 12, 0, 15, 1, "forest");
-    // Low countries / France / Germany plains
-    paintRect(m, 7, 5, 14, 9, "plains");
-    // Alps
-    paintDisk(m, 11, 10, 2, "mountain");
-    paintDisk(m, 12, 11, 2, "mountain");
-    setT(m, 10, 10, "mountain"); setT(m, 13, 10, "mountain");
-    // Carpathians
-    paintDisk(m, 17, 8, 2, "mountain");
-    setT(m, 16, 9, "mountain"); setT(m, 18, 9, "hills");
-    // Forests east
-    paintRect(m, 18, 3, 22, 6, "forest");
-    paintRect(m, 20, 4, 24, 7, "forest");
-    // Balkans hills
-    paintRect(m, 15, 11, 19, 13, "hills");
-    // Anatolia
-    paintRect(m, 22, 11, 26, 13, "hills");
-    paintRect(m, 23, 13, 26, 14, "desert");
-    // Spain edge
-    paintRect(m, 3, 12, 6, 13, "hills");
-    // Restore some land that was over-watered
-    paintRect(m, 7, 7, 11, 11, "plains");
-    setT(m, 10, 10, "mountain"); setT(m, 11, 10, "mountain"); setT(m, 12, 10, "mountain");
-    setT(m, 11, 11, "mountain"); setT(m, 12, 11, "hills");
-    // France west coast land
-    paintRect(m, 5, 7, 8, 11, "plains");
-    setT(m, 5, 8, "plains"); setT(m, 6, 8, "plains");
-    // Italy peninsula
-    setT(m, 12, 12, "hills"); setT(m, 12, 13, "hills"); setT(m, 13, 13, "plains");
-    setT(m, 13, 14, "plains"); setT(m, 12, 14, "water"); // keep Med
-    // Ensure Channel water between Britain and France
-    setT(m, 5, 5, "water"); setT(m, 6, 5, "water"); setT(m, 7, 5, "water");
-    setT(m, 6, 6, "water"); setT(m, 7, 6, "plains"); // Calais area
-
-    // Capitals & cities (approx geography)
-    // Britain
-    setCity(m, 4, 3, "britain", "London", true);
-    setCity(m, 3, 2, "britain", "Edinburgh", false);
-    // France
-    setCity(m, 8, 8, "france", "Paris", true);
-    setCity(m, 6, 10, "france", "Bordeaux", false);
-    setCity(m, 9, 9, "france", "Reims", false);
-    // Belgium
-    setCity(m, 8, 6, "belgium", "Brussels", true);
-    setCity(m, 7, 6, "belgium", "Liege", false);
-    // Germany
-    setCity(m, 12, 6, "germany", "Berlin", true);
-    setCity(m, 10, 7, "germany", "Cologne", false);
-    setCity(m, 13, 7, "germany", "Breslau", false);
-    setCity(m, 11, 5, "germany", "Hamburg", false);
-    // Austria-Hungary
-    setCity(m, 14, 9, "austria", "Vienna", true);
-    setCity(m, 15, 10, "austria", "Budapest", false);
-    setCity(m, 13, 11, "austria", "Trieste", false);
-    // Italy
-    setCity(m, 12, 12, "italy", "Rome", true);
-    setCity(m, 11, 11, "italy", "Milan", false);
-    // Serbia
-    setCity(m, 16, 12, "serbia", "Belgrade", true);
-    // Russia
-    setCity(m, 22, 5, "russia", "Petrograd", true);
-    setCity(m, 21, 7, "russia", "Moscow", false);
-    setCity(m, 19, 6, "russia", "Warsaw", false);
-    setCity(m, 23, 8, "russia", "Kiev", false);
-    // Ottoman
-    setCity(m, 22, 12, "ottoman", "Constantinople", true);
-    setCity(m, 24, 13, "ottoman", "Ankara", false);
-    // USA not on Europe map as playable start - optional expedition city off-map skipped
-    // Extra neutral-ish cities become contested
-    setCity(m, 17, 11, "serbia", "Nis", false);
-
-    return {
-      id: "europe",
-      name: "Europe 1914",
-      desc: "The great powers collide from the Channel to the Black Sea.",
-      w: W, h: H, cells: m.cells,
-      nations: ["britain", "france", "germany", "austria", "russia", "ottoman", "italy", "serbia", "belgium"],
-      startUnits: defaultStarts
-    };
-  }
-
-  function defaultStarts(map, nationId) {
-    const units = [];
-    let capital = null;
-    for (const c of Object.values(map.cells)) {
-      if (c.city && c.city.nation === nationId && c.city.capital) capital = c;
     }
-    if (!capital) return units;
-    const nat = GameData.NATIONS[nationId];
-    const basic = nat.uniqueUnit === "mass_infantry" ? "mass_infantry" : "infantry";
-    const used = new Set([key(capital.q, capital.r)]);
-    units.push({ type: basic, q: capital.q, r: capital.r });
-    const nbs = Hex.neighbors(capital.q, capital.r);
-
-    function placeNear(type, allowWater) {
-      const ring = nbs.concat([]);
-      for (const n of nbs) {
-        for (const n2 of Hex.neighbors(n.q, n.r)) ring.push(n2);
-      }
-      for (const n of ring) {
-        const k = key(n.q, n.r);
-        if (used.has(k)) continue;
-        const cell = map.cells[k];
-        if (!cell) continue;
-        if (allowWater) {
-          if (cell.terrain !== "water") continue;
-        } else {
-          if (cell.terrain === "water") continue;
-        }
-        units.push({ type, q: n.q, r: n.r });
-        used.add(k);
-        return true;
-      }
-      return false;
-    }
-
-    placeNear(basic, false);
-    if (nationId === "britain") placeNear("ship", true);
-    if (nationId === "france") placeNear("artillery", false);
-    return units;
   }
 
-  /* ---------- WESTERN FRONT ---------- */
-  function westernFront() {
-    const W = 16, H = 14;
-    const m = blank(W, H, "plains");
-    // Channel / North Sea
-    paintRect(m, 0, 0, 15, 1, "water");
-    paintRect(m, 0, 0, 2, 5, "water");
-    // Switzerland mountains SE
-    paintRect(m, 12, 11, 15, 13, "mountain");
-    paintDisk(m, 13, 12, 2, "mountain");
-    // Ardennes / Vosges
-    paintRect(m, 8, 5, 11, 8, "forest");
-    paintRect(m, 10, 8, 13, 10, "hills");
-    // Trench line roughly N-S through center
-    for (let r = 2; r <= 11; r++) {
-      setT(m, 6, r, "trench");
-      setT(m, 7, r, "trench");
-    }
-    // Flanders mud
-    paintRect(m, 3, 2, 5, 4, "swamp");
-
-    setCity(m, 3, 6, "france", "Paris", true);
-    setCity(m, 4, 3, "france", "Amiens", false);
-    setCity(m, 4, 9, "france", "Nancy", false);
-    setCity(m, 5, 2, "belgium", "Brussels", true);
-    setCity(m, 5, 4, "belgium", "Ypres", false);
-    setCity(m, 11, 4, "germany", "Cologne", false);
-    setCity(m, 12, 6, "germany", "Berlin", true);
-    setCity(m, 10, 9, "germany", "Metz", false);
-    setCity(m, 2, 3, "britain", "Calais Base", false);
-    // Britain expedition capital proxy
-    setCity(m, 1, 4, "britain", "London HQ", true);
-    // AEF sector (late-war stylized)
-    setCity(m, 2, 8, "usa", "Saint-Nazaire", true);
-    setCity(m, 3, 9, "usa", "American Sector", false);
-
-    return {
-      id: "western",
-      name: "Western Front",
-      desc: "Channel to Switzerland. Trenches divide France and Belgium from Germany.",
-      w: W, h: H, cells: m.cells,
-      nations: ["britain", "france", "germany", "belgium", "usa"],
-      startUnits: defaultStarts
-    };
+  function western() {
+    const rows = [
+      "WWWWWW..........",
+      "WWWW............",
+      "WW..............",
+      "WW.....TTT......",
+      "W......TTT......",
+      ".......TTT......",
+      "...FFF..HH..SS..",
+      "....F...HH..SS..",
+      "........HH......",
+      ".......HHH......",
+      "......MMMM......",
+      ".....MMMM......."
+    ];
+    const m = fromRows(rows);
+    city(m, 3, 2, "britain", "BEF Base", true);
+    city(m, 6, 2, "belgium", "Brussels", true);
+    city(m, 6, 3, "france", "Lille", false);
+    city(m, 4, 4, "france", "Amiens", false);
+    city(m, 3, 8, "france", "Paris", true);
+    city(m, 6, 5, "france", "Reims", false);
+    city(m, 8, 5, "france", "Verdun", false);
+    city(m, 10, 4, "germany", "Metz", false);
+    city(m, 11, 6, "germany", "Strasbourg", false);
+    city(m, 12, 3, "germany", "Cologne", true);
+    m.id = "western";
+    m.name = "Western Front";
+    m.desc = "From the Channel coast to the Rhine. Trenches, the Ardennes, and a short front.";
+    m.nations = ["britain", "france", "belgium", "germany"];
+    return m;
   }
 
-  /* ---------- EASTERN FRONT ---------- */
-  function easternFront() {
-    const W = 20, H = 14;
-    const m = blank(W, H, "plains");
-    paintRect(m, 0, 0, 19, 1, "water"); // Baltic
-    paintRect(m, 16, 10, 19, 13, "water"); // Black Sea edge
-    paintRect(m, 4, 3, 10, 8, "forest"); // Poland / Pripet
-    paintDisk(m, 6, 9, 2, "swamp");
-    paintRect(m, 8, 10, 12, 12, "hills"); // Carpathians
-    paintDisk(m, 10, 11, 2, "mountain");
-
-    setCity(m, 3, 4, "germany", "Berlin", true);
-    setCity(m, 5, 3, "germany", "Konigsberg", false);
-    setCity(m, 4, 7, "germany", "Breslau", false);
-    setCity(m, 7, 10, "austria", "Vienna", true);
-    setCity(m, 9, 11, "austria", "Budapest", false);
-    setCity(m, 8, 9, "austria", "Krakow", false);
-    setCity(m, 15, 3, "russia", "Petrograd", true);
-    setCity(m, 14, 6, "russia", "Moscow", false);
-    setCity(m, 11, 5, "russia", "Warsaw", false);
-    setCity(m, 13, 9, "russia", "Kiev", false);
-    setCity(m, 10, 12, "serbia", "Belgrade", true);
-
-    return {
-      id: "eastern",
-      name: "Eastern Front",
-      desc: "From the Baltic forests to the Carpathians.",
-      w: W, h: H, cells: m.cells,
-      nations: ["germany", "austria", "russia", "serbia"],
-      startUnits: defaultStarts
-    };
+  function eastern() {
+    const rows = [
+      "WWWWWWWWWWWWWWWW",
+      "WWW..SSSS..WWW..",
+      "..FF..SSSS......",
+      "..FFF..SS.......",
+      "..FFF...........",
+      "...FF...........",
+      "......HH........",
+      ".....HHMMM......",
+      "....HHMMMM......",
+      ".....HMMM.......",
+      "......MM........",
+      "..HH............",
+      "..H.............",
+      "................"
+    ];
+    const m = fromRows(rows);
+    city(m, 4, 1, "germany", "Königsberg", true);
+    city(m, 1, 4, "germany", "Posen", false);
+    city(m, 8, 4, "russia", "Warsaw", true);
+    city(m, 11, 3, "russia", "Brest", false);
+    city(m, 14, 6, "russia", "Kiev", false);
+    city(m, 6, 6, "austria", "Kraków", true);
+    city(m, 4, 6, "austria", "Przemyśl", false);
+    city(m, 10, 8, "austria", "Lvov", false);
+    m.id = "eastern";
+    m.name = "Eastern Front";
+    m.desc = "Baltic coast, Masurian lakes, and the Carpathians.";
+    m.nations = ["germany", "austria", "russia"];
+    return m;
   }
 
-  /* ---------- GALLIPOLI / DARDANELLES ---------- */
   function gallipoli() {
-    const W = 14, H = 12;
-    const m = blank(W, H, "water");
-    // Anatolian side (east)
-    paintRect(m, 8, 1, 13, 10, "hills");
-    paintRect(m, 9, 3, 12, 8, "plains");
-    // Gallipoli peninsula (west of strait)
-    paintRect(m, 3, 2, 5, 8, "hills");
-    setT(m, 4, 1, "hills"); setT(m, 5, 1, "hills");
-    setT(m, 3, 9, "plains"); setT(m, 4, 9, "plains");
-    // European Turkey
-    paintRect(m, 5, 0, 8, 2, "plains");
-    // Dardanelles water corridor
-    for (let r = 2; r <= 8; r++) {
-      setT(m, 6, r, "water");
-      setT(m, 7, r, "water");
-    }
-    // Aegean
-    paintRect(m, 0, 0, 2, 11, "water");
-    paintRect(m, 0, 9, 5, 11, "water");
-    // Beaches
-    setT(m, 3, 5, "plains"); setT(m, 3, 6, "plains");
-    setT(m, 5, 4, "plains");
+    const rows = [
+      "WWWW..HHHH.DDD",
+      "WWW.HHHHHH.DDD",
+      "WWWHHWHHHH.HDD",
+      "WW.HHWHHHH.HHH",
+      "WW.HHWH.HH.HHD",
+      "WWWHHWHHHH.HDD",
+      "WWW.HWHHHH.DDD",
+      "WWWWHWHH..DDDD",
+      "WWWWWWHH..DDDD",
+      "WWWWWW...DDDDD",
+      "WWWWWWW.DDDDDD",
+      "WWWWWWWWDDDDDD"
+    ];
+    const m = fromRows(rows);
+    put(m, 3, 7, "hills");
+    put(m, 4, 8, "hills");
+    city(m, 3, 4, "britain", "Anzac", true);
+    city(m, 4, 7, "france", "Cape Helles", true);
+    city(m, 4, 6, "france", "Sedd el Bahr", false);
+    city(m, 8, 1, "ottoman", "Constantinople", true);
+    city(m, 7, 4, "ottoman", "Kilid Bahr", false);
+    m.id = "gallipoli";
+    m.name = "Gallipoli";
+    m.desc = "A narrow strait, a hilly peninsula, and beachheads within gunshot of the forts.";
+    m.nations = ["britain", "france", "ottoman"];
+    m.startingTechs = { britain: ["sea_power"], france: ["sea_power"], ottoman: ["sea_power"] };
+    return m;
+  }
 
-    setCity(m, 10, 5, "ottoman", "Constantinople", true);
-    setCity(m, 9, 3, "ottoman", "Gallipoli", false);
-    setCity(m, 11, 7, "ottoman", "Bursa", false);
-    setCity(m, 4, 4, "britain", "Anzac Cove", true);
-    setCity(m, 4, 7, "france", "Cape Helles", true);
-    setCity(m, 3, 3, "britain", "Suvla", false);
+  function europe() {
+    const W = 24, H = 18;
+    const rows = [];
+    for (let r = 0; r < H; r++) rows.push(new Array(W).fill("W").join(""));
+    const m = fromRows(rows);
 
-    return {
-      id: "gallipoli",
-      name: "Gallipoli / Dardanelles",
-      desc: "Narrow seas, steep hills, and a costly landing.",
-      w: W, h: H, cells: m.cells,
-      nations: ["britain", "france", "ottoman"],
-      startUnits: function (map, nationId) {
-        const u = defaultStarts(map, nationId);
-        if (nationId === "britain" || nationId === "france") {
-          // Extra landing infantry
-          for (const c of Object.values(map.cells)) {
-            if (c.city && c.city.nation === nationId && !c.city.capital) {
-              u.push({ type: "infantry", q: c.q, r: c.r });
-              break;
-            }
-          }
+    function rect(q0, r0, q1, r1, t) {
+      for (let r = r0; r <= r1; r++) {
+        for (let q = q0; q <= q1; q++) {
+          if (q >= 0 && r >= 0 && q < W && r < H) put(m, q, r, t);
         }
-        if (nationId === "ottoman") {
-          for (const c of Object.values(map.cells)) {
-            if (c.city && c.city.nation === "ottoman" && c.city.name === "Gallipoli") {
-              u.push({ type: "fortified_inf", q: c.q, r: c.r });
-              break;
-            }
-          }
-        }
-        return u;
       }
-    };
+    }
+
+    /* Scandinavia stub in the north sea */
+    rect(13, 1, 16, 2, "forest");
+    /* Britain */
+    rect(3, 1, 4, 3, "plains");
+    put(m, 5, 1, "plains");
+    put(m, 5, 2, "hills");
+    put(m, 4, 1, "hills");
+    /* Ireland */
+    put(m, 1, 2, "plains");
+    put(m, 1, 3, "hills");
+    put(m, 2, 2, "plains");
+    /* Continent: Low Countries through Russia, q=6 so the Channel at q=5 stays water */
+    rect(6, 3, 20, 12, "plains");
+    /* French Atlantic bulge, still one hex off Britain */
+    rect(5, 7, 5, 12, "plains");
+    /* Italian peninsula */
+    put(m, 10, 12, "hills");
+    put(m, 11, 12, "hills");
+    put(m, 12, 12, "hills");
+    put(m, 11, 13, "plains");
+    put(m, 12, 13, "plains");
+    put(m, 13, 13, "hills");
+    put(m, 12, 14, "plains");
+    put(m, 13, 14, "plains");
+    put(m, 12, 15, "hills");
+    /* Anatolia */
+    rect(21, 11, 23, 13, "hills");
+    put(m, 22, 12, "desert");
+    put(m, 23, 12, "desert");
+    put(m, 22, 13, "desert");
+    put(m, 23, 13, "desert");
+    put(m, 21, 13, "desert");
+    /* AEF salient on the Atlantic edge */
+    put(m, 4, 9, "plains");
+
+    /* Alps */
+    disk(m, 11, 10, 1, "mountain");
+    put(m, 12, 9, "mountain");
+    put(m, 10, 10, "mountain");
+    put(m, 13, 10, "hills");
+    put(m, 12, 11, "mountain");
+    put(m, 11, 11, "mountain");
+    /* Carpathians */
+    put(m, 16, 7, "mountain");
+    put(m, 17, 7, "mountain");
+    put(m, 17, 8, "mountain");
+    put(m, 18, 8, "mountain");
+    put(m, 18, 9, "hills");
+    put(m, 16, 8, "hills");
+    /* Balkans */
+    put(m, 16, 12, "mountain");
+    put(m, 17, 12, "hills");
+    put(m, 17, 13, "mountain");
+    put(m, 18, 12, "hills");
+    put(m, 18, 13, "hills");
+    /* Adriatic — three hexes of water so armies cannot walk Italy to the Balkans */
+    rect(14, 12, 16, 15, "water");
+    rect(13, 13, 13, 15, "water");
+    /* Black Sea */
+    rect(21, 7, 23, 10, "water");
+    rect(20, 8, 20, 9, "water");
+    /* Sea of Marmara / strait, one hex, with a land bridge to the north */
+    put(m, 20, 12, "water");
+    put(m, 20, 11, "water");
+    put(m, 19, 12, "plains");
+    /* Mediterranean basin */
+    rect(0, 16, 23, 17, "water");
+    rect(0, 15, 11, 15, "water");
+    rect(14, 15, 23, 15, "water");
+    rect(0, 14, 10, 14, "water");
+    rect(15, 14, 23, 14, "water");
+    /* keep Italian toe */
+    put(m, 12, 14, "plains");
+    put(m, 13, 14, "plains");
+    put(m, 12, 15, "hills");
+    /* Southern shore around the straits so an army can reach Constantinople */
+    put(m, 19, 13, "hills");
+    put(m, 20, 13, "desert");
+
+    /* Forests: Germany / Poland / Russia */
+    rect(14, 4, 17, 5, "forest");
+    rect(18, 4, 20, 6, "forest");
+    put(m, 15, 6, "forest");
+    put(m, 19, 3, "forest");
+    put(m, 18, 3, "forest");
+    /* Ardennes-ish wood on the French frontier */
+    put(m, 8, 7, "forest");
+    put(m, 9, 7, "forest");
+    put(m, 9, 8, "forest");
+    /* Swamp, Pripet */
+    put(m, 18, 6, "swamp");
+    put(m, 19, 6, "swamp");
+    put(m, 19, 7, "swamp");
+    /* A few trenches on the Franco-German frontier */
+    put(m, 9, 6, "trench");
+    put(m, 11, 7, "trench");
+    /* Hills, Scottish and Balkan approaches already partly set */
+    put(m, 7, 11, "hills");
+    put(m, 8, 12, "hills");
+
+    city(m, 4, 2, "britain", "London", true);
+    city(m, 4, 1, "britain", "Edinburgh", false);
+    city(m, 8, 8, "france", "Paris", true);
+    city(m, 6, 11, "france", "Bordeaux", false);
+    city(m, 9, 10, "france", "Lyon", false);
+    city(m, 8, 5, "belgium", "Brussels", true);
+    city(m, 13, 5, "germany", "Berlin", true);
+    city(m, 10, 6, "germany", "Cologne", false);
+    city(m, 12, 8, "germany", "Munich", false);
+    city(m, 15, 8, "austria", "Vienna", true);
+    city(m, 17, 9, "austria", "Budapest", false);
+    city(m, 12, 14, "italy", "Rome", true);
+    city(m, 9, 12, "italy", "Milan", false);
+    city(m, 17, 11, "serbia", "Belgrade", true);
+    city(m, 21, 12, "ottoman", "Constantinople", true);
+    city(m, 18, 11, "ottoman", "Adrianople", false);
+    city(m, 18, 4, "russia", "Petrograd", true);
+    city(m, 20, 6, "russia", "Moscow", false);
+    city(m, 16, 6, "russia", "Warsaw", false);
+    city(m, 4, 9, "usa", "AEF Base", true);
+    city(m, 10, 4, null, "Amsterdam", false);
+
+    m.id = "europe";
+    m.name = "Europe 1914";
+    m.desc = "Channel to the Black Sea. Ten nations, and an American staging city on the Atlantic edge.";
+    m.nations = ["britain", "france", "belgium", "germany", "italy", "austria", "serbia", "ottoman", "russia", "usa"];
+    return m;
   }
 
   const ALL = {
-    europe: europe1914,
-    western: westernFront,
-    eastern: easternFront,
+    europe: europe,
+    western: western,
+    eastern: eastern,
     gallipoli: gallipoli
   };
 
-  function get(id) {
-    return ALL[id]();
-  }
+  function get(id) { return ALL[id](); }
 
   function list() {
-    return Object.keys(ALL).map(id => {
+    return ["western", "eastern", "gallipoli", "europe"].map(function (id) {
       const m = ALL[id]();
-      return { id: m.id, name: m.name, desc: m.desc, nations: m.nations };
+      return { id: m.id, name: m.name, desc: m.desc, nations: m.nations.slice() };
     });
   }
 
-  return { get, list, ALL };
-})();
+  return { get: get, list: list, ALL: ALL };
+});

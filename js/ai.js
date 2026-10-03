@@ -14,7 +14,8 @@
     const uniq = Rules.TECHS[nat.uniqueTech];
     if (uniq.req && !Rules.hasTech(p, uniq.req)) return Rules.TECHS[uniq.req];
     if (!Rules.hasTech(p, uniq.id)) return uniq;
-    if (needsNavy(state, p.id) && !Rules.hasTech(p, "sea_power")) return Rules.TECHS.sea_power;
+    if (acrossWater(state, p.id) && !Rules.hasTech(p, "field_guns")) return Rules.TECHS.field_guns;
+    if ((needsNavy(state, p.id) || acrossWater(state, p.id)) && !Rules.hasTech(p, "sea_power")) return Rules.TECHS.sea_power;
     if (!Rules.hasTech(p, "trenchworks")) return Rules.TECHS.trenchworks;
     return null;
   }
@@ -63,7 +64,7 @@
 
   /* True when some enemy capital cannot be reached by an infantry flood that
      refuses to cross more than one water hex in a row. */
-  function needsNavy(state, nationId) {
+  function capsReachable(state, nationId, maxWater) {
     const owned = [];
     const enemyCaps = [];
     for (const k in state.cells) {
@@ -72,7 +73,7 @@
       if (c.city.owner === nationId) owned.push(c);
       else if (c.city.capital && c.city.owner && c.city.owner !== nationId) enemyCaps.push(c);
     }
-    if (!owned.length || !enemyCaps.length) return false;
+    if (!owned.length || !enemyCaps.length) return !enemyCaps.length;
     const seen = {};
     const q = [];
     function push(cell, waterRun) {
@@ -97,16 +98,19 @@
         let wr = cur.waterRun;
         if (cell.terrain === "water") {
           wr += 1;
-          if (wr > 1) continue;
+          if (wr > maxWater) continue;
         } else wr = 0;
         push(cell, wr);
       }
     }
     for (let i = 0; i < enemyCaps.length; i++) {
-      if (!reached[Rules.key(enemyCaps[i].q, enemyCaps[i].r)]) return true;
+      if (!reached[Rules.key(enemyCaps[i].q, enemyCaps[i].r)]) return false;
     }
-    return false;
+    return true;
   }
+
+  function needsNavy(state, nationId) { return !capsReachable(state, nationId, 1); }
+  function acrossWater(state, nationId) { return !capsReachable(state, nationId, 0); }
 
   function cheapestInfantry(p) {
     let best = null;
@@ -155,7 +159,7 @@
     return true;
   }
 
-  function tryAttack(state, unit) {
+  function tryAttack(state, unit, force) {
     const targets = Rules.legalAttacks(state, unit);
     let best = null;
     for (let i = 0; i < targets.length; i++) {
@@ -164,7 +168,7 @@
       const dist = Hex.dist(unit, t);
       const spec = Rules.UNITS[unit.type];
       if (spec.range <= 1 && dist > 1) continue;
-      if (!shouldStrike(state, unit, t)) continue;
+      if (!force && !shouldStrike(state, unit, t)) continue;
       const dmg = Rules.strikeDamage(Rules.attackOf(state, unit), Rules.defenseOf(state, t));
       const score = (t.hp <= dmg ? 100 : 0) + dmg * 3 - t.hp;
       if (!best || score > best.score) best = { t: t, score: score };
@@ -193,6 +197,33 @@
       if (d < best) best = d;
     }
     return best;
+  }
+
+  function nearestEnemyDist(state, nationId, q, r) {
+    let best = 999;
+    for (let i = 0; i < state.units.length; i++) {
+      const u = state.units[i];
+      if (u.owner === nationId) continue;
+      const d = Hex.dist({ q: q, r: r }, u);
+      if (d < best) best = d;
+    }
+    return best;
+  }
+
+  function tryRetreat(state, unit) {
+    if (unit.hasAttacked || unit.move <= 0) return false;
+    if (nearestEnemyDist(state, unit.owner, unit.q, unit.r) > 1) return false;
+    const reach = Rules.reachable(state, unit);
+    let best = null;
+    reach.forEach(function (cost, k) {
+      const h = Hex.parse(k);
+      const d = nearestEnemyDist(state, unit.owner, h.q, h.r);
+      if (!best || d > best.d || (d === best.d && cost < best.cost)) best = { h: h, d: d, cost: cost };
+    });
+    if (!best || best.d <= 1) return false;
+    if (best.h.q === unit.q && best.h.r === unit.r) return false;
+    const res = Rules.moveUnit(state, unit.id, best.h.q, best.h.r);
+    return !!(res && res.ok && res.moved);
   }
 
   function tryMove(state, unit) {
@@ -229,7 +260,7 @@
     const lines = [];
     const goal = nextGoal(state, p);
     const reserve = goal ? goal.cost : 0;
-    if (needsNavy(state, p.id) && Rules.unitUnlocked(p, "ship")) {
+    if ((needsNavy(state, p.id) || acrossWater(state, p.id)) && Rules.unitUnlocked(p, "ship")) {
       const ships = state.units.filter(function (u) { return u.owner === p.id && Rules.UNITS[u.type].domain === "sea"; }).length;
       if (ships < 2 && p.supply - Rules.unitCost(p, "ship") >= reserve) {
         const coasts = [];
@@ -248,7 +279,28 @@
         }
       }
     }
+    if (acrossWater(state, p.id) && Rules.unitUnlocked(p, "artillery")) {
+      const guns = state.units.filter(function (u) {
+        return u.owner === p.id && (u.type === "artillery" || u.type === "artillery75" || u.type === "fortress_gun");
+      }).length;
+      if (guns < 2 && p.supply - Rules.unitCost(p, "artillery") >= reserve) {
+        const spots = emptyCities(state, p.id);
+        for (let i = 0; i < spots.length; i++) {
+          const res = Rules.train(state, p.id, spots[i].q, spots[i].r, "artillery");
+          if (!res.ok) continue;
+          lines.push(Rules.NATIONS[p.id].name + " trains field artillery in " + spots[i].city.name);
+          break;
+        }
+      }
+    }
     const cities = emptyCities(state, p.id);
+    let owned = 0;
+    for (const k in state.cells) {
+      const c = state.cells[k];
+      if (c.city && c.city.owner === p.id) owned++;
+    }
+    const have = state.units.filter(function (u) { return u.owner === p.id; }).length;
+    if (have >= 8) return lines;
     const kind = cheapestInfantry(p);
     if (!kind) return lines;
     for (let i = 0; i < cities.length; i++) {
@@ -264,42 +316,55 @@
     return lines;
   }
 
-  function steps(state) {
-    const lines = [];
+  function* steps(state) {
     const p = Rules.current(state);
-    if (!p || state.winner) return lines;
+    if (!p || state.winner) return;
     const mine = state.units.filter(function (u) { return u.owner === p.id; });
     mine.sort(function (a, b) {
+      function pri(u) {
+        const s = Rules.UNITS[u.type];
+        return (s.cls === "arty" || s.domain === "sea") ? 0 : 1;
+      }
+      const d = pri(a) - pri(b);
+      if (d) return d;
       return nearestGoalDist(state, p.id, a.q, a.r) - nearestGoalDist(state, p.id, b.q, b.r);
     });
     let moved = 0;
+    let acted = false;
     for (let i = 0; i < mine.length; i++) {
       const unit = state.units.find(function (u) { return u.id === mine[i].id; });
       if (!unit) continue;
-      const before = tryAttack(state, unit);
-      if (before) { lines.push(before); if (state.winner) return lines; continue; }
+      const before = tryAttack(state, unit, false);
+      if (before) { acted = true; yield before; if (state.winner) return; continue; }
+      const still0 = state.units.find(function (u) { return u.id === mine[i].id; });
+      if (!still0) continue;
+      if (tryRetreat(state, still0)) {
+        acted = true;
+        yield Rules.NATIONS[p.id].name + " pulls back";
+        continue;
+      }
       const still = state.units.find(function (u) { return u.id === mine[i].id; });
       if (!still) continue;
       const did = tryMove(state, still);
       if (did) moved += 1;
-      if (state.winner) {
-        if (moved) lines.push(Rules.NATIONS[p.id].name + " advances");
-        return lines;
-      }
+      if (did) { acted = true; yield Rules.NATIONS[p.id].name + " advances"; }
+      if (state.winner) return;
       const afterUnit = state.units.find(function (u) { return u.id === mine[i].id; });
       if (!afterUnit) continue;
-      const after = tryAttack(state, afterUnit);
-      if (after) lines.push(after);
-      if (state.winner) return lines;
+      let after = tryAttack(state, afterUnit, false);
+      if (!after && nearestEnemyDist(state, afterUnit.owner, afterUnit.q, afterUnit.r) <= 1) {
+        after = tryAttack(state, afterUnit, true);
+      }
+      if (after) { acted = true; yield after; }
+      if (state.winner) return;
     }
-    if (moved) lines.push(Rules.NATIONS[p.id].name + " advances");
-    if (state.winner) return lines;
+    if (state.winner) return;
     const trained = trainPhase(state, p);
-    for (let i = 0; i < trained.length; i++) lines.push(trained[i]);
+    for (let i = 0; i < trained.length; i++) yield trained[i];
     const researched = researchPhase(state, p);
-    for (let i = 0; i < researched.length; i++) lines.push(researched[i]);
-    if (!lines.length) lines.push(Rules.NATIONS[p.id].name + " holds");
-    return lines;
+    for (let i = 0; i < researched.length; i++) yield researched[i];
+    if (trained.length || researched.length) acted = true;
+    if (!acted) yield Rules.NATIONS[p.id].name + " holds";
   }
 
   /* Keep the unused flood helper referenced so lint-like checks stay quiet. */

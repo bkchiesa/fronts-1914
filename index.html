@@ -1,92 +1,107 @@
 <!DOCTYPE html>
 <html lang="en">
 <head>
-  <meta charset="UTF-8" />
-  <meta name="viewport" content="width=device-width, initial-scale=1" />
-  <title>Fronts, 1914</title>
-  <link rel="stylesheet" href="css/game.css" />
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Fronts, 1914</title>
+<link rel="stylesheet" href="css/game.css">
 </head>
 <body>
-  <div id="app">
-    <div id="topBar">
-      <h1>Fronts, 1914</h1>
-      <div id="hud" class="hidden">
-        <span class="hud-stat" id="hudNation">-</span>
-        <span class="hud-stat" id="hudStars">0 ★</span>
-        <span class="hud-stat" id="hudTurn">Turn 1</span>
-        <span class="hud-stat" id="hudMode"></span>
-        <div class="spacer"></div>
-        <button type="button" id="btnTech" class="ghost">Research (T)</button>
-        <button type="button" id="btnEndTurn">End Turn (E)</button>
-        <button type="button" id="btnMenu" class="ghost">Menu</button>
-      </div>
-    </div>
-    <div id="main">
-      <div id="canvasWrap">
-        <canvas id="gameCanvas"></canvas>
-        <div id="aiBanner" class="hidden"></div>
-        <div id="buildPanel" class="hidden"></div>
-        <div id="techPanel" class="hidden">
-          <button type="button" id="techClose" class="hidden">×</button>
-        </div>
-      </div>
-      <aside id="side">
-        <div id="unitCard" class="hidden"></div>
-        <div id="controlsHelp">
-          Click unit to select. Blue hexes: move. Red: attack.<br/>
-          Click own empty city to recruit.<br/>
-          WASD / arrows pan. E end turn. T tech.
-        </div>
-        <h3 style="color:var(--gold);font-size:0.85rem;">Battle Log</h3>
-        <div id="logBox"></div>
-      </aside>
-    </div>
-  </div>
-
-  <div id="menu">
-    <div class="menu-card">
+<div id="splash">
+  <div class="front-layer layer-plains"></div>
+  <div class="front-layer layer-forest"></div>
+  <div class="front-layer layer-trench"></div>
+  <div class="front-vignette"></div>
+  <div class="splash-badges" id="splashBadges"></div>
+  <div class="splash-plate">
+    <img class="plate-frame" src="art/ui/frame.png" alt="">
+    <div class="plate-copy">
       <h1>Fronts, 1914</h1>
       <p class="tagline">Turn-based grand tactics on the Great War fronts.</p>
-      <div class="field">
-        <label>Map</label>
-        <select id="mapSelect"></select>
-        <div id="mapDesc"></div>
-      </div>
-      <div class="field">
-        <label>Nation</label>
-        <select id="nationSelect"></select>
-        <div id="nationPreview" style="margin-top:8px"></div>
-      </div>
-      <div class="field">
-        <label>Mode</label>
-        <select id="modeSelect">
-          <option value="ai">Solo vs AI</option>
-          <option value="hotseat">Hotseat (2 players)</option>
-        </select>
-      </div>
-      <div class="field hidden" id="p2Field">
-        <label>Player 2 nation</label>
-        <select id="nationSelect2"></select>
-      </div>
-      <button type="button" id="btnStart">Begin Campaign</button>
+      <button type="button" id="btnBegin">Begin</button>
     </div>
   </div>
-
-  <div id="endScreen" class="hidden">
-    <div class="menu-card">
-      <h1 id="endTitle">Victory</h1>
-      <p id="endMsg"></p>
-      <button type="button" id="btnAgain" style="margin-top:16px">Return to Menu</button>
+  <div class="splash-minis" id="splashMinis"></div>
+  <p class="splash-skip" id="splashSkip">Click to skip</p>
+</div>
+<section id="setup" class="screen">
+  <div class="sheet">
+    <p class="kicker">Staff map · 1914</p>
+    <h1>Fronts, 1914</h1>
+    <p>A turn-based hex campaign. Supply feeds the army. Cities change hands. Capitals decide the war.</p>
+    <label class="row">Map</label>
+    <div id="maplist" class="maps"></div>
+    <label class="row">Mode</label>
+    <div class="modes">
+      <button type="button" id="mode-solo" class="modebtn on">Solo — you and the other staffs</button>
+      <button type="button" id="mode-hot" class="modebtn">Hotseat — two commanders</button>
     </div>
+    <label class="row" id="p1label">Your nation</label>
+    <div id="nats" class="nations"></div>
+    <label class="row hidden" id="p2label">Second commander</label>
+    <div id="nats2" class="nations hidden"></div>
+    <p class="hint" id="setupnote"></p>
+    <button type="button" id="startbtn">Open the campaign</button>
   </div>
+</section>
 
-  <script src="js/hex.js"></script>
-  <script src="js/data.js"></script>
-  <script src="js/maps.js"></script>
-  <script src="js/art.js"></script>
-  <script src="js/game.js"></script>
-  <script src="js/ai.js"></script>
-  <script src="js/ui.js"></script>
-  <script src="js/main.js"></script>
+<section id="game" class="screen hidden">
+  <div id="mapwrap"><canvas id="map"></canvas></div>
+  <aside id="side">
+    <header>
+      <h1>Fronts, 1914</h1>
+      <div id="turnline"></div>
+      <div id="supplyline"></div>
+      <div id="note"></div>
+    </header>
+    <div id="panels"></div>
+    <div id="sidefoot">
+      <button type="button" id="endturn"><img src="art/icon_endturn.png" alt="" id="endicon">End Turn</button>
+      <button type="button" id="helpbtn">How to play</button>
+      <button type="button" id="resign">Setup</button>
+    </div>
+  </aside>
+</section>
+
+<div id="pass" class="overlay hidden">
+  <div class="sheet">
+    <h2>Pass the device</h2>
+    <p id="passtext"></p>
+    <button type="button" id="passbtn">Begin turn</button>
+  </div>
+</div>
+
+<div id="victory" class="overlay hidden">
+  <div class="sheet">
+    <h2>Campaign over</h2>
+    <p id="victorytext"></p>
+    <button type="button" id="againbtn">Return to setup</button>
+  </div>
+</div>
+
+<div id="help" class="overlay hidden">
+  <div class="sheet">
+    <h2>How to play</h2>
+    <ol class="help-lines">
+      <li>Nations take turns. Move your units, then press End Turn. In a hotseat game, pass the device when asked.</li>
+      <li>At the start of your turn each city yields 2 Supply and each capital yields 3. The count is shown beside the supply pip.</li>
+      <li>Select a unit, then a highlighted hex to move. Forest, hills, swamp, and trenches cost more movement. Mountains block most units.</li>
+      <li>Water stops an army, but a single hex of water can be crossed in one move. You cannot end on water. A wider sea needs a ship, and a ship on the crossing blocks it.</li>
+      <li>Attack after moving, or instead of moving. Most units strike an adjacent hex. Field artillery and fortress guns reach two hexes. A unit at 0 HP is removed.</li>
+      <li>Forest, hills, and trenches protect the defender. Trenchworks adds 1 defense to your infantry. Mountain infantry and Alpini may enter mountains.</li>
+      <li>Fighters ignore terrain and cannot capture. Ships stay on water. A foot unit that ends its move on a city captures it, capital or otherwise.</li>
+      <li>Select your city, if the hex is empty, and spend Supply to train. Locked units need research. Ships are launched onto adjacent water.</li>
+      <li>Research shared methods, or your nation's own: Grand Fleet, Soixante-Quinze, Storm Tactics, Alpine Corps, Levy, Redoubt, Alpini Corps, Air Service, Irregulars, or Forts.</li>
+      <li>You win by holding every capital, or by being the last nation with a city or a unit.</li>
+    </ol>
+    <button type="button" id="helpclose">Close</button>
+  </div>
+</div>
+
+<script src="js/hex.js"></script>
+<script src="js/rules.js"></script>
+<script src="js/maps.js"></script>
+<script src="js/ai.js"></script>
+<script src="js/game.js"></script>
 </body>
 </html>

@@ -1,523 +1,900 @@
-/* Core game state and rules for Fronts, 1914 */
-window.Game = (function () {
-  const { key } = Hex;
-  let state = null;
-  let uid = 1;
+/* Fronts, 1914 — canvas staff map and panels. */
+(function () {
+  const HEX = 32;
+  const art = {};
+  let game = null;
+  let mapId = "western";
+  let hotseat = false;
+  let pick1 = null;
+  let pick2 = null;
+  let cam = { x: 48, y: 48, scale: 1 };
+  let selectedId = null;
+  let focus = null;
+  let busy = false;
+  let endedBy = null;
+  let drag = null;
+  const canvas = document.getElementById("map");
+  const ctx = canvas.getContext("2d");
 
-  function create(mapId, nationIds, mode) {
+  /* Khaki Plate paths. Loose root unit_*.png and terrain_*.png are not used.
+     Flags stay art/flag_*.png. Hills, desert, and swamp reuse the closest plate. */
+  const TERRAIN_PATH = {
+    plains: "art/terrain/plains.png",
+    forest: "art/terrain/forest.png",
+    mountain: "art/terrain/mountain.png",
+    water: "art/terrain/water.png",
+    trench: "art/terrain/trench.png",
+    hills: "art/terrain/mountain.png",
+    desert: "art/terrain/plains.png",
+    swamp: "art/terrain/forest.png"
+  };
+  const SETTLEMENT_PATH = {
+    city: "art/settlements/city.png",
+    capital: "art/settlements/capital.png"
+  };
+  const BADGE_PATH = {
+    britain: "art/nations/britain.png",
+    france: "art/nations/france.png",
+    germany: "art/nations/germany.png",
+    austria: "art/nations/austria-hungary.png",
+    russia: "art/nations/russia.png",
+    ottoman: "art/nations/ottoman.png",
+    italy: "art/nations/italy.png",
+    usa: "art/nations/united-states.png",
+    serbia: "art/nations/serbia.png",
+    belgium: "art/nations/belgium.png"
+  };
+  const NATION_CODE = {
+    britain: "gb", france: "fr", germany: "de", austria: "ah", russia: "ru",
+    ottoman: "ot", italy: "it", usa: "us", serbia: "rs", belgium: "be"
+  };
+  const HAS_BATTLESHIP = { gb: 1, ah: 1, ru: 1, ot: 1 };
+  const HAS_PLANE = { fr: 1, de: 1, it: 1, us: 1, be: 1 };
+  const HAS_BALLOON = { rs: 1 };
+  const UNIT_CHAIN = {
+    infantry: ["infantry"],
+    cavalry: ["cavalry"],
+    artillery: ["artillery"],
+    ship: ["battleship", "unique", "infantry"],
+    dreadnought: ["battleship", "unique", "infantry"],
+    artillery75: ["unique", "artillery", "infantry"],
+    stormtrooper: ["unique", "infantry"],
+    mountain_inf: ["unique", "infantry"],
+    mass_infantry: ["unique", "infantry"],
+    fortified_inf: ["unique", "infantry"],
+    alpini: ["unique", "infantry"],
+    guerrilla: ["unique", "infantry"],
+    fortress_gun: ["unique", "artillery", "infantry"],
+    fighter: ["plane", "balloon", "unique", "infantry"]
+  };
+  const UNIT_FILES = [
+    "art/units/gb-infantry.png", "art/units/gb-cavalry.png", "art/units/gb-artillery.png", "art/units/gb-unique.png", "art/units/gb-battleship.png",
+    "art/units/fr-infantry.png", "art/units/fr-cavalry.png", "art/units/fr-artillery.png", "art/units/fr-unique.png", "art/units/fr-plane.png",
+    "art/units/de-infantry.png", "art/units/de-cavalry.png", "art/units/de-artillery.png", "art/units/de-unique.png", "art/units/de-plane.png",
+    "art/units/ah-infantry.png", "art/units/ah-cavalry.png", "art/units/ah-artillery.png", "art/units/ah-unique.png", "art/units/ah-battleship.png",
+    "art/units/ru-infantry.png", "art/units/ru-cavalry.png", "art/units/ru-artillery.png", "art/units/ru-unique.png", "art/units/ru-battleship.png",
+    "art/units/ot-infantry.png", "art/units/ot-cavalry.png", "art/units/ot-artillery.png", "art/units/ot-unique.png", "art/units/ot-battleship.png",
+    "art/units/it-infantry.png", "art/units/it-cavalry.png", "art/units/it-artillery.png", "art/units/it-unique.png", "art/units/it-plane.png",
+    "art/units/us-infantry.png", "art/units/us-cavalry.png", "art/units/us-artillery.png", "art/units/us-unique.png", "art/units/us-plane.png",
+    "art/units/rs-infantry.png", "art/units/rs-cavalry.png", "art/units/rs-artillery.png", "art/units/rs-unique.png", "art/units/rs-balloon.png",
+    "art/units/be-infantry.png", "art/units/be-cavalry.png", "art/units/be-artillery.png", "art/units/be-unique.png", "art/units/be-plane.png"
+  ];
+
+  function haveSuffix(code, suffix) {
+    if (suffix === "battleship") return !!HAS_BATTLESHIP[code];
+    if (suffix === "plane") return !!HAS_PLANE[code];
+    if (suffix === "balloon") return !!HAS_BALLOON[code];
+    return suffix === "infantry" || suffix === "cavalry" || suffix === "artillery" || suffix === "unique";
+  }
+
+  function unitPath(nationId, unitType) {
+    const code = NATION_CODE[nationId];
+    if (!code) return null;
+    const chain = UNIT_CHAIN[unitType] || ["infantry"];
+    for (let i = 0; i < chain.length; i++) {
+      if (!haveSuffix(code, chain[i])) continue;
+      return "art/units/" + code + "-" + chain[i] + ".png";
+    }
+    return "art/units/" + code + "-infantry.png";
+  }
+
+  function knockChalk(img) {
+    const c = document.createElement("canvas");
+    c.width = img.naturalWidth; c.height = img.naturalHeight;
+    const g = c.getContext("2d");
+    g.drawImage(img, 0, 0);
+    let imageData;
+    try { imageData = g.getImageData(0, 0, c.width, c.height); }
+    catch (err) { return Promise.resolve(img); }
+    const d = imageData.data;
+    const w = c.width, h = c.height;
+    function at(x, y) {
+      const i = (y * w + x) * 4;
+      return [d[i], d[i + 1], d[i + 2]];
+    }
+    const corners = [at(2, 2), at(w - 3, 2), at(2, h - 3), at(w - 3, h - 3)];
+    const bg = [0, 0, 0];
+    for (let k = 0; k < 4; k++) { bg[0] += corners[k][0]; bg[1] += corners[k][1]; bg[2] += corners[k][2]; }
+    bg[0] /= 4; bg[1] /= 4; bg[2] /= 4;
+    const thresh2 = 46 * 46;
+    const seen = new Uint8Array(w * h);
+    const qx = new Int32Array(w * h);
+    const qy = new Int32Array(w * h);
+    let qe = 0;
+    function push(x, y) {
+      if (x < 0 || y < 0 || x >= w || y >= h) return;
+      const id = y * w + x;
+      if (seen[id]) return;
+      const i = id * 4;
+      const dr = d[i] - bg[0], dg = d[i + 1] - bg[1], db = d[i + 2] - bg[2];
+      if (dr * dr + dg * dg + db * db > thresh2) return;
+      seen[id] = 1;
+      qx[qe] = x; qy[qe] = y; qe++;
+    }
+    for (let x = 0; x < w; x++) { push(x, 0); push(x, h - 1); }
+    for (let y = 0; y < h; y++) { push(0, y); push(w - 1, y); }
+    for (let qs = 0; qs < qe; qs++) {
+      const x = qx[qs], y = qy[qs];
+      push(x + 1, y); push(x - 1, y); push(x, y + 1); push(x, y - 1);
+    }
+    for (let id = 0; id < w * h; id++) if (seen[id]) d[id * 4 + 3] = 0;
+    g.putImageData(imageData, 0, 0);
+    return new Promise(function (resolve) {
+      const out = new Image();
+      out.onload = function () { resolve(out); };
+      out.onerror = function () { resolve(img); };
+      out.src = c.toDataURL("image/png");
+    });
+  }
+
+  function loadOne(path, key, cut) {
+    return new Promise(function (resolve) {
+      const img = new Image();
+      img.onload = function () {
+        const store = function (finalImg) {
+          art[key] = finalImg;
+          if (key !== path) art[path] = finalImg;
+          draw();
+          resolve(finalImg);
+        };
+        if (cut) knockChalk(img).then(store);
+        else store(img);
+      };
+      img.onerror = function () { art[key] = null; resolve(null); };
+      img.src = path;
+    });
+  }
+
+  function loadArt() {
+    const jobs = [];
+    Object.keys(TERRAIN_PATH).forEach(function (id) {
+      const path = TERRAIN_PATH[id];
+      if (jobs.indexOf(path) === -1) jobs.push(loadOne(path, path, false));
+    });
+    jobs.push(loadOne(SETTLEMENT_PATH.city, SETTLEMENT_PATH.city, false));
+    jobs.push(loadOne(SETTLEMENT_PATH.capital, SETTLEMENT_PATH.capital, false));
+    jobs.push(loadOne("art/ui/frame.png", "art/ui/frame.png", false));
+    Object.keys(BADGE_PATH).forEach(function (id) {
+      jobs.push(loadOne(BADGE_PATH[id], BADGE_PATH[id], true));
+    });
+    UNIT_FILES.forEach(function (path) { jobs.push(loadOne(path, path, true)); });
+    ["britain", "france", "germany", "austria", "russia", "ottoman", "italy", "usa", "serbia", "belgium"].forEach(function (id) {
+      const key = Rules.NATIONS[id].flag;
+      jobs.push(loadOne("art/" + key + ".png", key, false));
+    });
+    ["icon_endturn", "icon_skull", "icon_star", "icon_tech", "overlay_attack", "overlay_move", "overlay_select"].forEach(function (name) {
+      jobs.push(loadOne("art/" + name + ".png", name, false));
+    });
+    return Promise.all(jobs);
+  }
+
+  function spriteReady(name) {
+    const img = art[name];
+    return !!(img && img.complete && img.naturalWidth > 0);
+  }
+
+  function sleep(ms) { return new Promise(function (r) { setTimeout(r, ms); }); }
+
+  function note(text) {
+    const n = document.getElementById("note");
+    if (n) n.textContent = text || "";
+  }
+
+  function current() { return game ? Rules.current(game) : null; }
+
+  function hexCenter(q, r) {
+    const p = Hex.toPixel(q, r, HEX);
+    return { x: cam.x + p.x * cam.scale, y: cam.y + p.y * cam.scale };
+  }
+
+  function resize() {
+    const dpr = window.devicePixelRatio || 1;
+    const w = canvas.clientWidth || 800;
+    const h = canvas.clientHeight || 600;
+    canvas.width = Math.max(1, Math.floor(w * dpr));
+    canvas.height = Math.max(1, Math.floor(h * dpr));
+    ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
+    draw();
+  }
+
+  function fitCamera() {
+    if (!game) return;
+    const size = HEX;
+    let minX = Infinity, minY = Infinity, maxX = -Infinity, maxY = -Infinity;
+    for (const k in game.cells) {
+      const c = game.cells[k];
+      const p = Hex.toPixel(c.q, c.r, size);
+      minX = Math.min(minX, p.x); maxX = Math.max(maxX, p.x);
+      minY = Math.min(minY, p.y); maxY = Math.max(maxY, p.y);
+    }
+    const cw = canvas.clientWidth || 800;
+    const ch = canvas.clientHeight || 600;
+    const worldW = (maxX - minX) + size * 2.4;
+    const worldH = (maxY - minY) + size * 2.8;
+    cam.scale = Math.max(0.45, Math.min(1.35, cw / worldW, ch / worldH));
+    cam.x = (cw - (maxX + minX) * cam.scale) / 2;
+    cam.y = (ch - (maxY + minY) * cam.scale) / 2;
+  }
+
+  function pathHex(cx, cy, size) {
+    const pts = Hex.corners(cx, cy, size);
+    ctx.beginPath();
+    ctx.moveTo(pts[0].x, pts[0].y);
+    for (let i = 1; i < pts.length; i++) ctx.lineTo(pts[i].x, pts[i].y);
+    ctx.closePath();
+  }
+
+  function drawFallbackTerrain(terrain, cx, cy, size) {
+    const t = Rules.TERRAIN[terrain] || Rules.TERRAIN.plains;
+    ctx.fillStyle = t.color;
+    ctx.fill();
+    ctx.save();
+    ctx.clip();
+    ctx.strokeStyle = "rgba(44,42,38,0.35)";
+    ctx.lineWidth = 1;
+    if (terrain === "forest") {
+      ctx.fillStyle = "#244028";
+      ctx.beginPath(); ctx.arc(cx, cy - size * 0.15, size * 0.28, 0, Math.PI * 2); ctx.fill();
+      ctx.beginPath(); ctx.arc(cx - size * 0.28, cy + size * 0.1, size * 0.22, 0, Math.PI * 2); ctx.fill();
+    } else if (terrain === "mountain") {
+      ctx.fillStyle = "#d9d3c6";
+      ctx.beginPath();
+      ctx.moveTo(cx, cy - size * 0.55);
+      ctx.lineTo(cx + size * 0.45, cy + size * 0.35);
+      ctx.lineTo(cx - size * 0.45, cy + size * 0.35);
+      ctx.fill();
+    } else if (terrain === "hills") {
+      ctx.strokeStyle = "#5c5344";
+      ctx.beginPath();
+      ctx.arc(cx, cy + size * 0.2, size * 0.35, Math.PI, 0);
+      ctx.stroke();
+    } else if (terrain === "water") {
+      ctx.strokeStyle = "rgba(230,223,208,0.45)";
+      ctx.beginPath();
+      ctx.moveTo(cx - size * 0.4, cy);
+      ctx.quadraticCurveTo(cx, cy - size * 0.2, cx + size * 0.4, cy);
+      ctx.stroke();
+    } else if (terrain === "trench") {
+      ctx.strokeStyle = "#3a3428";
+      ctx.strokeRect(cx - size * 0.35, cy - size * 0.08, size * 0.7, size * 0.16);
+    } else if (terrain === "desert") {
+      ctx.fillStyle = "rgba(90,70,40,0.25)";
+      ctx.fillRect(cx - size * 0.3, cy, size * 0.6, size * 0.08);
+    } else if (terrain === "swamp") {
+      ctx.fillStyle = "#2c4034";
+      ctx.fillRect(cx - size * 0.3, cy, size * 0.15, size * 0.28);
+      ctx.fillRect(cx + size * 0.05, cy - size * 0.1, size * 0.15, size * 0.28);
+    }
+    ctx.restore();
+  }
+
+  function draw() {
+    if (!game) return;
+    const w = canvas.clientWidth || 800;
+    const h = canvas.clientHeight || 600;
+    ctx.clearRect(0, 0, w, h);
+    const size = HEX * cam.scale;
+    const reach = selectedReach();
+    const attacks = selectedAttacks();
+    const keys = Object.keys(game.cells);
+    for (let i = 0; i < keys.length; i++) {
+      const c = game.cells[keys[i]];
+      const p = hexCenter(c.q, c.r);
+      pathHex(p.x, p.y, size * 0.98);
+      const tname = TERRAIN_PATH[c.terrain] || TERRAIN_PATH.plains;
+      if (spriteReady(tname)) {
+        ctx.save();
+        ctx.clip();
+        ctx.drawImage(art[tname], p.x - size, p.y - size, size * 2, size * 2);
+        ctx.restore();
+      } else {
+        drawFallbackTerrain(c.terrain, p.x, p.y, size);
+      }
+      ctx.strokeStyle = "rgba(44,42,38,0.45)";
+      ctx.lineWidth = 1;
+      ctx.stroke();
+    }
+    for (let i = 0; i < keys.length; i++) {
+      const c = game.cells[keys[i]];
+      if (!c.city) continue;
+      const p = hexCenter(c.q, c.r);
+      const mark = c.city.capital ? SETTLEMENT_PATH.capital : SETTLEMENT_PATH.city;
+      if (spriteReady(mark)) ctx.drawImage(art[mark], p.x - size * 0.45, p.y - size * 0.7, size * 0.9, size * 0.9);
+      else {
+        ctx.fillStyle = c.city.capital ? "#c2b280" : "#efe8d8";
+        ctx.strokeStyle = "#2c2a26";
+        ctx.fillRect(p.x - size * 0.18, p.y - size * 0.42, size * 0.36, size * 0.36);
+        ctx.strokeRect(p.x - size * 0.18, p.y - size * 0.42, size * 0.36, size * 0.36);
+      }
+      if (c.city.owner && Rules.NATIONS[c.city.owner]) {
+        const fl = Rules.NATIONS[c.city.owner].flag;
+        if (spriteReady(fl)) ctx.drawImage(art[fl], p.x - size * 0.16, p.y - size * 0.16, size * 0.32, size * 0.32);
+        else {
+          ctx.fillStyle = Rules.NATIONS[c.city.owner].color;
+          ctx.fillRect(p.x - size * 0.14, p.y - size * 0.14, size * 0.28, size * 0.28);
+        }
+      }
+      if (cam.scale >= 0.62) {
+        ctx.fillStyle = "#1c1a16";
+        ctx.font = Math.max(10, Math.floor(11 * cam.scale)) + "px Georgia, serif";
+        ctx.textAlign = "center";
+        ctx.fillText(c.city.name, p.x, p.y + size * 0.42);
+      }
+    }
+    for (let i = 0; i < game.units.length; i++) {
+      const u = game.units[i];
+      const p = hexCenter(u.q, u.r);
+      const spec = Rules.UNITS[u.type];
+      const nat = Rules.NATIONS[u.owner];
+      const plate = unitPath(u.owner, u.type);
+      if (plate && spriteReady(plate)) ctx.drawImage(art[plate], p.x - size * 0.55, p.y - size * 0.72, size * 1.1, size * 1.1);
+      else {
+        ctx.beginPath();
+        ctx.fillStyle = nat.color;
+        ctx.arc(p.x, p.y - size * 0.05, size * 0.28, 0, Math.PI * 2);
+        ctx.fill();
+        ctx.fillStyle = "#f4efe4";
+        ctx.font = "bold " + Math.floor(12 * cam.scale) + "px Georgia, serif";
+        ctx.textAlign = "center";
+        ctx.fillText(spec.name.slice(0, 1), p.x, p.y);
+      }
+      const bw = size * 0.5;
+      ctx.fillStyle = "#2c2a26";
+      ctx.fillRect(p.x - bw / 2, p.y + size * 0.28, bw, 4);
+      ctx.fillStyle = "#7a2e2e";
+      ctx.fillRect(p.x - bw / 2, p.y + size * 0.28, bw * Math.max(0, u.hp / u.maxHp), 4);
+    }
+    const sel = selectedUnit();
+    if (sel) {
+      const p = hexCenter(sel.q, sel.r);
+      drawOverlay("overlay_select", p.x, p.y, size, "rgba(194,178,128,0.45)");
+    }
+    reach.forEach(function (cost, k) {
+      if (cost === 0) return;
+      const h = Hex.parse(k);
+      const p = hexCenter(h.q, h.r);
+      drawOverlay("overlay_move", p.x, p.y, size, "rgba(90,122,70,0.35)");
+    });
+    for (let i = 0; i < attacks.length; i++) {
+      const p = hexCenter(attacks[i].q, attacks[i].r);
+      drawOverlay("overlay_attack", p.x, p.y, size, "rgba(122,46,46,0.4)");
+    }
+  }
+
+  function drawOverlay(name, x, y, size, fallback) {
+    if (spriteReady(name)) {
+      ctx.drawImage(art[name], x - size * 0.7, y - size * 0.7, size * 1.4, size * 1.4);
+    } else {
+      ctx.beginPath();
+      ctx.fillStyle = fallback;
+      ctx.arc(x, y, size * 0.55, 0, Math.PI * 2);
+      ctx.fill();
+    }
+  }
+
+  function selectedUnit() {
+    if (!game || selectedId == null) return null;
+    return game.units.find(function (u) { return u.id === selectedId; }) || null;
+  }
+
+  function myTurn() {
+    const p = current();
+    return !!(p && p.human && !busy && !game.winner);
+  }
+
+  function selectedReach() {
+    const u = selectedUnit();
+    if (!u || !myTurn() || u.owner !== current().id || u.hasAttacked) return new Map();
+    return Rules.reachable(game, u);
+  }
+
+  function selectedAttacks() {
+    const u = selectedUnit();
+    if (!u || !myTurn() || u.owner !== current().id) return [];
+    return Rules.legalAttacks(game, u);
+  }
+
+  function flagHTML(nationId) {
+    if (!nationId || !Rules.NATIONS[nationId]) return "";
+    const n = Rules.NATIONS[nationId];
+    return '<img class="tinyflag" alt="" data-color="' + n.color + '" src="art/' + n.flag + '.png">';
+  }
+
+  function hookFlags(root) {
+    const scope = root || document;
+    const imgs = scope.querySelectorAll("img.tinyflag");
+    for (let i = 0; i < imgs.length; i++) {
+      imgs[i].addEventListener("error", function () {
+        const span = document.createElement("span");
+        span.className = "flagfb";
+        span.style.background = imgs[i].getAttribute("data-color") || "#666";
+        imgs[i].replaceWith(span);
+      });
+    }
+  }
+
+  function renderSide() {
+    const p = current();
+    const turn = document.getElementById("turnline");
+    const supply = document.getElementById("supplyline");
+    if (!p) return;
+    const nat = Rules.NATIONS[p.id];
+    turn.innerHTML = flagHTML(p.id) + " " + nat.name + (p.human ? "" : " (staff)") + " · round " + game.turnNumber;
+    const pip = spriteReady("icon_star")
+      ? '<img src="art/icon_star.png" alt="">'
+      : '<span style="color:#8a7044">●</span>';
+    supply.innerHTML = pip + " Supply " + p.supply;
+    hookFlags(document.getElementById("side"));
+    const box = document.getElementById("panels");
+    let html = "";
+    html += unitCard();
+    html += cityCard();
+    html += techCard();
+    html += '<section class="card"><h2>Dispatch</h2><div id="log">' +
+      game.log.slice(-12).map(function (l) { return "<div>" + escapeHtml(l) + "</div>"; }).join("") +
+      "</div></section>";
+    box.innerHTML = html;
+    hookFlags(box);
+    bindPanel();
+    document.getElementById("endturn").disabled = busy || !p.human || !!game.winner;
+  }
+
+  function escapeHtml(s) {
+    return String(s).replace(/[&<>]/g, function (c) {
+      return c === "&" ? "&amp;" : c === "<" ? "&lt;" : "&gt;";
+    });
+  }
+
+  function unitCard() {
+    const u = selectedUnit() || (focus && Rules.unitAt(game, focus.q, focus.r));
+    if (!u) return '<section class="card"><h2>Unit</h2><p class="stats">Select a hex.</p></section>';
+    const spec = Rules.UNITS[u.type];
+    const nat = Rules.NATIONS[u.owner];
+    const atk = Rules.attackOf(game, u);
+    const def = Rules.defenseOf(game, u);
+    const plate = unitPath(u.owner, u.type);
+    const thumb = plate && spriteReady(plate) ? '<img class="unitplate" alt="" src="' + art[plate].src + '">' : "";
+    return '<section class="card"><h2>Unit</h2>' + thumb +
+      '<p class="stats"><strong>' + spec.name + '</strong> · ' + nat.name + '<br>' +
+      'HP ' + u.hp + '/' + u.maxHp + ' · Move ' + u.move + '/' + u.maxMove + '<br>' +
+      'Attack ' + atk + ' · Defense ' + def + ' · Range ' + spec.range + '</p>' +
+      '<div class="hpbar"><span style="width:' + Math.max(0, (u.hp / u.maxHp) * 100) + '%"></span></div>' +
+      '</section>';
+  }
+
+  function cityCard() {
+    const cell = focus ? game.cells[Rules.key(focus.q, focus.r)] : null;
+    if (!cell || !cell.city) return '<section class="card"><h2>City</h2><p class="stats">No city selected. Capitals yield 3 Supply, other cities 2.</p></section>';
+    const city = cell.city;
+    const owner = city.owner ? Rules.NATIONS[city.owner].name : "Neutral";
+    let html = '<section class="card"><h2>City</h2><p class="stats">' + flagHTML(city.owner) +
+      ' <strong>' + escapeHtml(city.name) + '</strong>' + (city.capital ? " · capital" : "") +
+      '<br>' + owner + ' · yields ' + (city.capital ? "3" : "2") + ' Supply</p>';
+    const me = current();
+    if (me && city.owner === me.id && me.human) {
+      html += '<div class="btns">';
+      const list = Rules.catalog(me.id);
+      for (let i = 0; i < list.length; i++) {
+        const id = list[i];
+        const spec = Rules.UNITS[id];
+        const unlocked = Rules.unitUnlocked(me, id);
+        const cost = Rules.unitCost(me, id);
+        const check = Rules.canTrain(game, me.id, cell.q, cell.r, id);
+        const why = !unlocked ? "locked" : (!check.ok ? check.reason : "");
+        html += '<button type="button" data-train="' + id + '"' + (check.ok ? "" : " disabled") + '>' +
+          spec.name + ' — ' + cost + ' Supply' + (why ? ' <small>(' + escapeHtml(why) + ')</small>' : '') +
+          '</button>';
+      }
+      html += '</div>';
+    }
+    html += '</section>';
+    return html;
+  }
+
+  function techCard() {
+    const me = current();
+    if (!me) return "";
+    let html = '<section class="card"><h2>Research</h2><div class="btns">';
+    const list = Rules.techChoices(me.id);
+    for (let i = 0; i < list.length; i++) {
+      const tech = list[i];
+      const owned = Rules.hasTech(me, tech.id);
+      const check = Rules.canResearch(game, me.id, tech.id);
+      let extra = "";
+      if (owned) extra = "owned";
+      else if (!check.ok) extra = check.reason;
+      html += '<button type="button" data-tech="' + tech.id + '"' + (check.ok && me.human ? "" : " disabled") +
+        ' title="' + escapeHtml(tech.desc) + '">' +
+        tech.name + ' — ' + tech.cost + ' Supply' + (extra ? ' <small>(' + escapeHtml(extra) + ')</small>' : '') +
+        '</button>';
+    }
+    html += '</div></section>';
+    return html;
+  }
+
+  function bindPanel() {
+    const buttons = document.querySelectorAll("#panels button");
+    for (let i = 0; i < buttons.length; i++) {
+      buttons[i].addEventListener("click", onPanelClick);
+    }
+  }
+
+  function onPanelClick(ev) {
+    const btn = ev.currentTarget;
+    if (!myTurn()) return;
+    const me = current();
+    if (btn.dataset.train) {
+      if (!focus) return;
+      const res = Rules.train(game, me.id, focus.q, focus.r, btn.dataset.train);
+      if (!res.ok) { note(res.reason); return; }
+      const cell = game.cells[Rules.key(focus.q, focus.r)];
+      Rules.pushLog(game, Rules.NATIONS[me.id].name + " trains " + Rules.UNITS[btn.dataset.train].name.toLowerCase() + " in " + cell.city.name);
+      note("");
+      afterAction();
+    } else if (btn.dataset.tech) {
+      const res = Rules.research(game, me.id, btn.dataset.tech);
+      if (!res.ok) { note(res.reason); return; }
+      Rules.pushLog(game, Rules.NATIONS[me.id].name + " researches " + Rules.TECHS[btn.dataset.tech].name);
+      note("");
+      afterAction();
+    }
+  }
+
+  function afterAction() {
+    if (game.winner) { showVictory(); return; }
+    const u = selectedUnit();
+    if (u && u.owner !== current().id) selectedId = null;
+    renderSide();
+    draw();
+  }
+
+  function screenHex(ev) {
+    const rect = canvas.getBoundingClientRect();
+    const sx = ev.clientX - rect.left;
+    const sy = ev.clientY - rect.top;
+    const wx = (sx - cam.x) / cam.scale;
+    const wy = (sy - cam.y) / cam.scale;
+    return Hex.fromPixel(wx, wy, HEX);
+  }
+
+  function onMapClick(ev) {
+    if (!game || busy) return;
+    const h = screenHex(ev);
+    const cell = game.cells[Rules.key(h.q, h.r)];
+    if (!cell) { note("Off the map."); return; }
+    focus = { q: h.q, r: h.r };
+    const me = current();
+    const reach = selectedReach();
+    const attacks = selectedAttacks();
+    const k = Rules.key(h.q, h.r);
+    if (myTurn() && selectedUnit() && attacks.some(function (t) { return t.q === h.q && t.r === h.r; })) {
+      const target = Rules.unitAt(game, h.q, h.r);
+      const res = Rules.attack(game, selectedUnit().id, target.id);
+      if (!res.ok) note(res.reason);
+      else {
+        note("");
+        const who = Rules.NATIONS[me.id].name;
+        Rules.pushLog(game, who + " attacks (" + res.dmg + " damage" + (res.killed ? ", destroyed" : "") + (res.attackerDied ? ", lost the unit" : "") + ")");
+        if (res.captured) {
+          const city = game.cells[k].city;
+          if (city) Rules.pushLog(game, who + " captures " + city.name);
+        }
+        if (res.attackerDied) selectedId = null;
+      }
+      afterAction();
+      return;
+    }
+    if (myTurn() && selectedUnit() && reach.has(k) && reach.get(k) > 0) {
+      const res = Rules.moveUnit(game, selectedUnit().id, h.q, h.r);
+      if (!res.ok) note(res.reason);
+      else {
+        note("");
+        if (res.captured) {
+          const city = cell.city;
+          Rules.pushLog(game, Rules.NATIONS[me.id].name + " captures " + (city ? city.name : "the city"));
+        }
+      }
+      afterAction();
+      return;
+    }
+    const unit = Rules.unitAt(game, h.q, h.r);
+    if (unit && me && unit.owner === me.id && myTurn()) selectedId = unit.id;
+    else if (unit) selectedId = null;
+    else selectedId = null;
+    renderSide();
+    draw();
+  }
+
+  async function playUntilHuman() {
+    while (game && !game.winner) {
+      const p = Rules.current(game);
+      if (!p) break;
+      if (p.human) {
+        if (hotseat && endedBy && p.id !== endedBy) {
+          showPass(p);
+          return;
+        }
+        renderSide();
+        draw();
+        return;
+      }
+      await runAi();
+      if (game.winner) { showVictory(); return; }
+      Rules.endTurn(game);
+    }
+    if (game && game.winner) showVictory();
+    else { renderSide(); draw(); }
+  }
+
+  async function runAi() {
+    busy = true;
+    renderSide();
+    try {
+      for (const line of FrontAI.steps(game)) {
+        Rules.pushLog(game, line);
+        renderSide();
+        draw();
+        await sleep(180);
+        if (game.winner) break;
+      }
+    } catch (err) {
+      console.error(err);
+      Rules.pushLog(game, "The staff missed its orders. The turn ends.");
+    }
+    busy = false;
+  }
+
+  function showPass(p) {
+    const nat = Rules.NATIONS[p.id];
+    document.getElementById("passtext").innerHTML = "Next command: " + flagHTML(p.id) + " <strong>" + nat.name + "</strong>. Hand over the desk, then begin the turn.";
+    document.getElementById("pass").classList.remove("hidden");
+    renderSide();
+    draw();
+  }
+
+  function showVictory() {
+    const id = game.winner;
+    const nat = id ? Rules.NATIONS[id] : null;
+    const text = document.getElementById("victorytext");
+    if (nat) text.innerHTML = flagHTML(id) + " <strong>" + nat.name + "</strong> holds the field.";
+    else text.textContent = "The front falls quiet. No nation remains.";
+    document.getElementById("victory").classList.remove("hidden");
+    document.getElementById("pass").classList.add("hidden");
+    renderSide();
+    draw();
+  }
+
+  function startGame() {
     const map = Maps.get(mapId);
-    const players = nationIds.map((id, i) => {
-      const nat = GameData.NATIONS[id];
-      const techs = new Set(nat.startTechs || ["org1"]);
-      return {
-        id, name: nat.name, color: nat.color,
-        stars: 5,
-        techs,
-        isAI: mode === "ai" && i > 0,
-        alive: true
+    const humans = hotseat ? [pick1, pick2] : [pick1];
+    if (!pick1 || humans.indexOf(null) !== -1) { document.getElementById("setupnote").textContent = "Choose a nation."; return; }
+    if (hotseat && pick1 === pick2) { document.getElementById("setupnote").textContent = "The two commanders must differ."; return; }
+    try {
+      game = Rules.createGame(map, humans);
+    } catch (err) {
+      console.error(err);
+      document.getElementById("setupnote").textContent = "This map could not be opened.";
+      return;
+    }
+    selectedId = null;
+    focus = null;
+    endedBy = null;
+    busy = false;
+    document.getElementById("setup").classList.add("hidden");
+    document.getElementById("game").classList.remove("hidden");
+    document.getElementById("victory").classList.add("hidden");
+    document.getElementById("pass").classList.add("hidden");
+    const p = current();
+    Rules.pushLog(game, Rules.NATIONS[p.id].name + " opens the campaign.");
+    requestAnimationFrame(function () {
+      resize();
+      fitCamera();
+      draw();
+      if (p.human) renderSide();
+      else playUntilHuman();
+    });
+  }
+
+  function toSetup() {
+    busy = false;
+    game = null;
+    document.getElementById("game").classList.add("hidden");
+    document.getElementById("victory").classList.add("hidden");
+    document.getElementById("pass").classList.add("hidden");
+    document.getElementById("help").classList.add("hidden");
+    document.getElementById("setup").classList.remove("hidden");
+  }
+
+  function renderSetup() {
+    const maps = Maps.list();
+    const box = document.getElementById("maplist");
+    box.innerHTML = maps.map(function (m) {
+      return '<button type="button" class="mapbtn' + (m.id === mapId ? " on" : "") + '" data-map="' + m.id + '"><strong>' +
+        m.name + '</strong><span>' + m.nations.length + ' nations</span></button>';
+    }).join("");
+    const map = Maps.get(mapId);
+    if (!pick1 || map.nations.indexOf(pick1) === -1) pick1 = map.nations[0];
+    if (!pick2 || map.nations.indexOf(pick2) === -1 || pick2 === pick1) {
+      pick2 = map.nations.find(function (id) { return id !== pick1; }) || map.nations[0];
+    }
+    document.getElementById("nats").innerHTML = nationButtons(map.nations, pick1, "1");
+    document.getElementById("nats2").innerHTML = nationButtons(map.nations, pick2, "2");
+    document.getElementById("p2label").classList.toggle("hidden", !hotseat);
+    document.getElementById("nats2").classList.toggle("hidden", !hotseat);
+    document.getElementById("mode-solo").classList.toggle("on", !hotseat);
+    document.getElementById("mode-hot").classList.toggle("on", hotseat);
+    const desc = maps.find(function (m) { return m.id === mapId; });
+    document.getElementById("setupnote").textContent = desc ? desc.desc : "";
+    bindSetup();
+  }
+
+  function nationButtons(ids, selected, slot) {
+    return ids.map(function (id) {
+      const n = Rules.NATIONS[id];
+      const badge = BADGE_PATH[id];
+      return '<button type="button" class="natbtn' + (id === selected ? " on" : "") + '" data-slot="' + slot + '" data-nat="' + id + '">' +
+        '<img class="natbadge" alt="" src="' + badge + '"><strong>' + n.name + '</strong></button>';
+    }).join("");
+  }
+
+  function bindSetup() {
+    document.querySelectorAll("[data-map]").forEach(function (b) {
+      b.onclick = function () { mapId = b.dataset.map; renderSetup(); };
+    });
+    document.querySelectorAll("[data-nat]").forEach(function (b) {
+      b.onclick = function () {
+        if (b.dataset.slot === "1") pick1 = b.dataset.nat;
+        else pick2 = b.dataset.nat;
+        renderSetup();
       };
     });
-
-    const units = [];
-    for (const p of players) {
-      const starters = map.startUnits(map, p.id);
-      for (const s of starters) {
-        units.push(makeUnit(s.type, p.id, s.q, s.r));
-      }
-    }
-
-    // Assign city ownership already on map; clear cities of non-playing nations
-    const cells = {};
-    for (const [k, c] of Object.entries(map.cells)) {
-      const cell = { q: c.q, r: c.r, terrain: c.terrain, city: null };
-      if (c.city && nationIds.includes(c.city.nation)) {
-        cell.city = {
-          nation: c.city.nation,
-          name: c.city.name,
-          capital: c.city.capital,
-          level: c.city.level || 1,
-          producing: null
-        };
-      } else if (c.city) {
-        // Neutral city capturable
-        cell.city = {
-          nation: null,
-          name: c.city.name,
-          capital: false,
-          level: 1,
-          producing: null,
-          neutral: true
-        };
-      }
-      cells[k] = cell;
-    }
-
-    state = {
-      mapId,
-      w: map.w,
-      h: map.h,
-      cells,
-      players,
-      units,
-      turn: 0,
-      active: 0,
-      phase: "play", // play | won | lost
-      winner: null,
-      selected: null,
-      moveHints: [],
-      attackHints: [],
-      log: [],
-      mode
-    };
-    incomeFor(players[0]);
-    refreshHints();
-    log(players[0].name + " begins the campaign.");
-    return state;
   }
 
-  function makeUnit(type, owner, q, r) {
-    const def = GameData.UNITS[type];
-    return {
-      id: uid++,
-      type,
-      owner,
-      q, r,
-      hp: def.hp,
-      maxHp: def.hp,
-      moved: false,
-      attacked: false,
-      veteran: false
-    };
-  }
-
-  function get() { return state; }
-
-  function activePlayer() { return state.players[state.active]; }
-
-  function log(msg) {
-    state.log.unshift(msg);
-    if (state.log.length > 40) state.log.pop();
-  }
-
-  function unitAt(q, r) {
-    return state.units.find(u => u.q === q && u.r === r && u.hp > 0);
-  }
-
-  function enemyAt(q, r, owner) {
-    return state.units.find(u => u.q === q && u.r === r && u.hp > 0 && u.owner !== owner);
-  }
-
-  function cell(q, r) {
-    return state.cells[key(q, r)] || null;
-  }
-
-  function incomeFor(player) {
-    let stars = 0;
-    let cityCount = 0;
-    for (const c of Object.values(state.cells)) {
-      if (c.city && c.city.nation === player.id) {
-        cityCount++;
-        let gain = c.city.capital ? 2 : 1;
-        gain += (c.city.level - 1);
-        if (player.techs.has("ind1")) gain += 1;
-        if (player.techs.has("ind2")) gain += 1;
-        const nat = GameData.NATIONS[player.id];
-        if (nat.lateIndustry && player.techs.has("ind2")) gain += 1;
-        stars += gain;
-      }
+  function bindSplash() {
+    const splash = document.getElementById("splash");
+    if (!splash) return;
+    let settled = false;
+    function settle() {
+      if (settled) return;
+      settled = true;
+      splash.classList.add("is-settled");
+      const hint = document.getElementById("splashSkip");
+      if (hint) hint.textContent = "";
     }
-    // USA growth: bump city level slowly
-    if (GameData.NATIONS[player.id].lateIndustry && player.techs.has("ind2")) {
-      for (const c of Object.values(state.cells)) {
-        if (c.city && c.city.nation === player.id && c.city.level < 3 && Math.random() < 0.35) {
-          c.city.level++;
-          log(c.city.name + " expands (US industry).");
-        }
-      }
-    }
-    player.stars += Math.max(1, stars);
-    if (cityCount === 0) player.stars += 0;
-  }
-
-  function selectHex(q, r) {
-    if (state.phase !== "play") return;
-    const p = activePlayer();
-    if (p.isAI) return;
-
-    const u = unitAt(q, r);
-    if (u && u.owner === p.id) {
-      state.selected = u.id;
-      refreshHints();
-      return;
-    }
-    if (state.selected) {
-      const sel = state.units.find(x => x.id === state.selected);
-      if (!sel) { state.selected = null; return; }
-      // Attack?
-      if (state.attackHints.some(h => h.q === q && h.r === r)) {
-        doAttack(sel, q, r);
-        return;
-      }
-      // Move?
-      if (state.moveHints.some(h => h.q === q && h.r === r)) {
-        doMove(sel, q, r);
-        return;
-      }
-    }
-    // City production select
-    const c = cell(q, r);
-    if (c && c.city && c.city.nation === p.id) {
-      state.selected = null;
-      state.cityFocus = { q, r };
-      refreshHints();
-      return;
-    }
-    state.selected = null;
-    state.cityFocus = null;
-    refreshHints();
-  }
-
-  function refreshHints() {
-    state.moveHints = [];
-    state.attackHints = [];
-    if (!state.selected) return;
-    const u = state.units.find(x => x.id === state.selected);
-    if (!u || u.moved && u.attacked) return;
-    const def = GameData.UNITS[u.type];
-    if (!u.moved) {
-      state.moveHints = reachable(u);
-    }
-    if (!u.attacked) {
-      state.attackHints = attackTargets(u);
-    }
-  }
-
-  function moveCost(u, terrain, nationId) {
-    const t = GameData.TERRAIN[terrain];
-    if (!t) return 99;
-    const def = GameData.UNITS[u.type];
-    if (t.sea) {
-      if (def.domain === "sea" || def.domain === "air") return 1;
-      return 99;
-    }
-    if (def.domain === "sea") return 99; // ships stay at sea
-    if (terrain === "mountain") {
-      const nat = GameData.NATIONS[nationId];
-      if (nat.mountainCost) return nat.mountainCost;
-      if (u.type === "alpini" || u.type === "mountain_inf") return 1;
-      return t.move;
-    }
-    return t.move;
-  }
-
-  function reachable(u) {
-    const def = GameData.UNITS[u.type];
-    const max = def.move;
-    const start = key(u.q, u.r);
-    const best = { [start]: 0 };
-    const out = [];
-    const queue = [{ q: u.q, r: u.r, left: max }];
-    while (queue.length) {
-      const cur = queue.shift();
-      for (const n of Hex.neighbors(cur.q, cur.r)) {
-        const c = cell(n.q, n.r);
-        if (!c) continue;
-        const cost = moveCost(u, c.terrain, u.owner);
-        if (cost > cur.left) continue;
-        const other = unitAt(n.q, n.r);
-        if (other && other.owner !== u.owner) continue; // cannot enter enemy
-        if (other && other.owner === u.owner && !(n.q === u.q && n.r === u.r)) continue;
-        const nk = key(n.q, n.r);
-        const used = max - (cur.left - cost);
-        if (best[nk] != null && best[nk] <= used) continue;
-        best[nk] = used;
-        const left = cur.left - cost;
-        if (!(n.q === u.q && n.r === u.r)) out.push({ q: n.q, r: n.r });
-        if (left > 0 && !other) queue.push({ q: n.q, r: n.r, left });
-      }
-    }
-    // unique
-    const seen = new Set();
-    return out.filter(h => {
-      const k = key(h.q, h.r);
-      if (seen.has(k)) return false;
-      seen.add(k);
-      // must be empty
-      return !unitAt(h.q, h.r);
+    const badges = document.getElementById("splashBadges");
+    const minis = document.getElementById("splashMinis");
+    ["britain", "france", "belgium", "germany", "austria", "russia", "serbia", "ottoman", "italy", "usa"].forEach(function (id, i) {
+      const img = document.createElement("img");
+      img.alt = "";
+      img.dataset.path = BADGE_PATH[id];
+      img.src = BADGE_PATH[id];
+      img.style.animationDelay = (i * 0.04) + "s";
+      badges.appendChild(img);
     });
-  }
-
-  function effectiveRange(u) {
-    let r = GameData.UNITS[u.type].range;
-    const p = state.players.find(x => x.id === u.owner);
-    if (p && p.techs.has("arty2") && (u.type === "artillery" || u.type === "artillery75" || u.type === "fortress_gun"))
-      r += 1;
-    if (p && p.techs.has("navy3") && GameData.UNITS[u.type].domain === "sea")
-      r = Math.max(r, 2);
-    return r;
-  }
-
-  function attackTargets(u) {
-    const range = effectiveRange(u);
-    const targets = [];
-    for (const enemy of state.units) {
-      if (enemy.owner === u.owner || enemy.hp <= 0) continue;
-      const d = Hex.dist(u, enemy);
-      if (d <= range && d >= 1) targets.push({ q: enemy.q, r: enemy.r });
-    }
-    return targets;
-  }
-
-  function doMove(u, q, r) {
-    if (u.moved) return;
-    const c = cell(q, r);
-    if (!c || unitAt(q, r)) return;
-    u.q = q; u.r = r;
-    u.moved = true;
-    // Capture city
-    if (c.city && c.city.nation !== u.owner) {
-      const prev = c.city.nation;
-      c.city.nation = u.owner;
-      c.city.neutral = false;
-      c.city.producing = null;
-      log(activePlayer().name + " captures " + c.city.name + "!");
-      if (c.city.capital && prev) {
-        log("Capital " + c.city.name + " has fallen!");
+    ["art/units/gb-infantry.png", "art/units/fr-cavalry.png", "art/units/de-artillery.png", "art/units/gb-unique.png", "art/units/rs-balloon.png", "art/units/ot-battleship.png"].forEach(function (path, i) {
+      const img = document.createElement("img");
+      img.alt = "";
+      img.dataset.path = path;
+      img.src = path;
+      img.style.animationDelay = (0.08 + i * 0.06) + "s";
+      minis.appendChild(img);
+    });
+    loadArt().then(function () {
+      if (!badges || !minis) return;
+      const bimgs = badges.querySelectorAll("img");
+      for (let i = 0; i < bimgs.length; i++) {
+        const src = art[bimgs[i].dataset.path];
+        if (src && src.src) bimgs[i].src = src.src;
       }
-      checkVictory();
-    }
-    // Serbia guerrilla heal in forest
-    if (u.type === "guerrilla" && c.terrain === "forest") {
-      u.hp = Math.min(u.maxHp, u.hp + 1);
-    }
-    refreshHints();
-    // After move, still can attack if not attacked
-    if (!u.attacked) {
-      state.attackHints = attackTargets(u);
-      state.moveHints = [];
-    } else {
-      state.selected = null;
-      refreshHints();
-    }
-  }
-
-  function defenseBonus(u, c) {
-    let d = GameData.TERRAIN[c.terrain].def || 0;
-    const nat = GameData.NATIONS[u.owner];
-    const udef = GameData.UNITS[u.type];
-    let defStat = udef.defense;
-    if (nat.unitMods[u.type] && nat.unitMods[u.type].defense)
-      defStat += nat.unitMods[u.type].defense;
-    if (c.city) {
-      d += 1;
-      if (GameData.NATIONS[c.city.nation] && GameData.NATIONS[c.city.nation].cityDefense)
-        d += GameData.NATIONS[c.city.nation].cityDefense;
-    }
-    if (u.type === "fortified_inf" && (c.city || c.terrain === "trench")) d += 2;
-    if (u.type === "alpini" && c.terrain === "mountain") { /* attack handled elsewhere */ }
-    return defStat + d;
-  }
-
-  function attackStat(u, c) {
-    const udef = GameData.UNITS[u.type];
-    const nat = GameData.NATIONS[u.owner];
-    let a = udef.attack;
-    if (nat.unitMods[u.type] && nat.unitMods[u.type].attack) a += nat.unitMods[u.type].attack;
-    // France artillery bonus already in unitMods; also generic
-    if ((u.type === "artillery" || u.type === "artillery75") && nat.id === "france") a += 0; // already in mods
-    if (u.type === "alpini" && c && c.terrain === "mountain") a += 1;
-    if (u.type === "guerrilla" && c && c.terrain === "forest") a += 1;
-    if (u.veteran) a += 1;
-    const p = state.players.find(x => x.id === u.owner);
-    if (p && p.techs.has("org3")) a += 1;
-    if (p && p.techs.has("navy3") && GameData.UNITS[u.type].domain === "sea") a += 1;
-    if (p && p.techs.has("air2") && u.type === "fighter") a += 1;
-    if (p && p.techs.has("arty2") && (u.type === "artillery" || u.type === "artillery75" || u.type === "fortress_gun")) {
-      // range already handled at target finding via modified check - attack +0 here
-    }
-    return a;
-  }
-
-  function doAttack(attacker, tq, tr) {
-    if (attacker.attacked) return;
-    const defender = enemyAt(tq, tr, attacker.owner) || unitAt(tq, tr);
-    if (!defender || defender.owner === attacker.owner) return;
-    const ac = cell(attacker.q, attacker.r);
-    const dc = cell(defender.q, defender.r);
-    const atk = attackStat(attacker, ac);
-    const def = defenseBonus(defender, dc);
-    // Damage formula inspired by simple TBS
-    let dmg = Math.max(1, Math.round((atk * (0.6 + 0.4 * attacker.hp / attacker.maxHp)) * (6 / Math.max(1.5, def)) + Math.random() * 2));
-    let retal = 0;
-    const adef = GameData.UNITS[attacker.type];
-    if (adef.range <= 1) {
-      const datk = GameData.UNITS[defender.type].attack;
-      retal = Math.max(0, Math.round((datk * (0.5 + 0.5 * defender.hp / defender.maxHp)) * (3.5 / Math.max(1.5, defenseBonus(attacker, ac))) + Math.random()));
-    }
-    defender.hp -= dmg;
-    log(GameData.UNITS[attacker.type].name + " hits " + GameData.UNITS[defender.type].name + " for " + dmg + ".");
-    if (defender.hp <= 0) {
-      log(GameData.UNITS[defender.type].name + " destroyed.");
-      state.units = state.units.filter(x => x.id !== defender.id);
-      attacker.veteran = true;
-      // Germany stormtrooper breakthrough
-      if (attacker.type === "stormtrooper") {
-        attacker.moved = false; // one extra move
-        log("Stormtroopers breakthrough!");
+      const mimgs = minis.querySelectorAll("img");
+      for (let i = 0; i < mimgs.length; i++) {
+        const src = art[mimgs[i].dataset.path];
+        if (src && src.src) mimgs[i].src = src.src;
       }
-      // Capture if move onto tile? melee can advance
-      if (adef.range === 1 && !unitAt(tq, tr)) {
-        const oc = cell(tq, tr);
-        attacker.q = tq; attacker.r = tr;
-        if (oc.city && oc.city.nation !== attacker.owner) {
-          oc.city.nation = attacker.owner;
-          oc.city.neutral = false;
-          log("Seized " + oc.city.name + " in the assault!");
-        }
+    });
+    splash.addEventListener("click", function (e) {
+      if (e.target.closest("#btnBegin")) return;
+      if (!settled) settle();
+    });
+    document.getElementById("btnBegin").onclick = function (e) {
+      e.stopPropagation();
+      settle();
+      splash.classList.add("is-leaving");
+      const setup = document.getElementById("setup");
+      setup.classList.remove("hidden");
+      setup.classList.add("is-entering");
+      setTimeout(function () { splash.classList.add("hidden"); }, 650);
+    };
+    setTimeout(settle, 1100);
+  }
+
+  function wire() {
+    bindSplash();
+    document.getElementById("mode-solo").onclick = function () { hotseat = false; renderSetup(); };
+    document.getElementById("mode-hot").onclick = function () { hotseat = true; renderSetup(); };
+    document.getElementById("startbtn").onclick = startGame;
+    document.getElementById("endturn").onclick = function () {
+      if (!game || busy || game.winner) return;
+      const p = current();
+      if (!p || !p.human) return;
+      endedBy = p.id;
+      Rules.pushLog(game, Rules.NATIONS[p.id].name + " ends the turn.");
+      Rules.endTurn(game);
+      if (game.winner) { showVictory(); return; }
+      playUntilHuman();
+    };
+    document.getElementById("helpbtn").onclick = function () { document.getElementById("help").classList.remove("hidden"); };
+    document.getElementById("helpclose").onclick = function () { document.getElementById("help").classList.add("hidden"); };
+    document.getElementById("resign").onclick = toSetup;
+    document.getElementById("againbtn").onclick = toSetup;
+    document.getElementById("passbtn").onclick = function () {
+      document.getElementById("pass").classList.add("hidden");
+      endedBy = current() ? current().id : endedBy;
+      renderSide();
+      draw();
+    };
+    window.addEventListener("resize", function () { if (game) resize(); });
+    canvas.addEventListener("pointerdown", function (ev) {
+      drag = { x: ev.clientX, y: ev.clientY, camx: cam.x, camy: cam.y, moved: false };
+    });
+    canvas.addEventListener("pointermove", function (ev) {
+      if (!drag) return;
+      const dx = ev.clientX - drag.x;
+      const dy = ev.clientY - drag.y;
+      if (Math.abs(dx) + Math.abs(dy) > 5) drag.moved = true;
+      if (drag.moved) {
+        cam.x = drag.camx + dx;
+        cam.y = drag.camy + dy;
+        draw();
       }
-    } else if (retal > 0) {
-      attacker.hp -= retal;
-      log("Counterattack deals " + retal + ".");
-      if (attacker.hp <= 0) {
-        log(GameData.UNITS[attacker.type].name + " destroyed in the clash.");
-        state.units = state.units.filter(x => x.id !== attacker.id);
-        state.selected = null;
+    });
+    canvas.addEventListener("pointerup", function (ev) {
+      if (drag && !drag.moved) onMapClick(ev);
+      drag = null;
+    });
+    canvas.addEventListener("wheel", function (ev) {
+      if (!game) return;
+      ev.preventDefault();
+      const rect = canvas.getBoundingClientRect();
+      const sx = ev.clientX - rect.left;
+      const sy = ev.clientY - rect.top;
+      const wx = (sx - cam.x) / cam.scale;
+      const wy = (sy - cam.y) / cam.scale;
+      const factor = ev.deltaY > 0 ? 0.9 : 1.1;
+      cam.scale = Math.max(0.35, Math.min(2.1, cam.scale * factor));
+      cam.x = sx - wx * cam.scale;
+      cam.y = sy - wy * cam.scale;
+      draw();
+    }, { passive: false });
+    window.addEventListener("keydown", function (ev) {
+      if (ev.key === "Escape") {
+        document.getElementById("help").classList.add("hidden");
       }
-    }
-    if (attacker.hp > 0) {
-      attacker.attacked = true;
-      attacker.moved = true;
-    }
-    checkVictory();
-    refreshHints();
-    if (attacker.hp > 0 && attacker.type === "stormtrooper" && !attacker.moved) {
-      state.moveHints = reachable(attacker);
-      state.attackHints = [];
-    } else {
-      state.selected = null;
-      state.moveHints = [];
-      state.attackHints = [];
-    }
+    });
+    const endIcon = document.getElementById("endicon");
+    endIcon.onerror = function () { endIcon.remove(); };
   }
 
-  function produce(q, r, unitType) {
-    const p = activePlayer();
-    if (p.isAI) return false;
-    const c = cell(q, r);
-    if (!c || !c.city || c.city.nation !== p.id) return false;
-    if (unitAt(q, r)) { log("City occupied; cannot recruit."); return false; }
-    const techs = p.techs;
-    const avail = GameData.availableUnits(p.id, techs);
-    if (!avail.includes(unitType)) return false;
-    const cost = GameData.unitCost(p.id, unitType, techs);
-    if (p.stars < cost) { log("Not enough stars."); return false; }
-    const udef = GameData.UNITS[unitType];
-    if (udef.domain === "sea") {
-      // must be adjacent to water or on coastal - spawn on adjacent water
-      const waterNb = Hex.neighbors(q, r).find(n => {
-        const cc = cell(n.q, n.r);
-        return cc && cc.terrain === "water" && !unitAt(n.q, n.r);
-      });
-      if (!waterNb) { log("Need adjacent sea to launch ships."); return false; }
-      p.stars -= cost;
-      state.units.push(makeUnit(unitType, p.id, waterNb.q, waterNb.r));
-      log("Launched " + udef.name + " (−" + cost + "★)");
-      return true;
-    }
-    p.stars -= cost;
-    const nu = makeUnit(unitType, p.id, q, r);
-    nu.moved = true; nu.attacked = true; // newly built can't act
-    state.units.push(nu);
-    log("Recruited " + udef.name + " in " + c.city.name + " (−" + cost + "★)");
-    return true;
-  }
-
-  function research(techId) {
-    const p = activePlayer();
-    if (p.isAI) return false;
-    const tech = GameData.TECHS[techId];
-    if (!tech || p.techs.has(techId)) return false;
-    if (tech.req && !p.techs.has(tech.req)) return false;
-    const cost = GameData.techCost(p.id, techId);
-    if (p.stars < cost) { log("Not enough stars for research."); return false; }
-    p.stars -= cost;
-    p.techs.add(techId);
-    log("Researched " + tech.name + " (−" + cost + "★)");
-    return true;
-  }
-
-  function endTurn() {
-    if (state.phase !== "play") return;
-    const cur = activePlayer();
-    // Heal units in cities slightly
-    for (const u of state.units) {
-      if (u.owner !== cur.id) continue;
-      const c = cell(u.q, u.r);
-      if (c && c.city && c.city.nation === u.owner) {
-        u.hp = Math.min(u.maxHp, u.hp + 2);
-      }
-      u.moved = false;
-      u.attacked = false;
-    }
-    // Next player
-    let next = (state.active + 1) % state.players.length;
-    let guard = 0;
-    while (!state.players[next].alive && guard < 20) {
-      next = (next + 1) % state.players.length;
-      guard++;
-    }
-    if (next <= state.active) state.turn++;
-    state.active = next;
-    state.selected = null;
-    state.cityFocus = null;
-    state.moveHints = [];
-    state.attackHints = [];
-    const np = activePlayer();
-    incomeFor(np);
-    log("--- " + np.name + " turn " + (state.turn + 1) + " ---");
-    checkVictory();
-    return np;
-  }
-
-  function checkVictory() {
-    // A player is eliminated if no cities and no units
-    for (const p of state.players) {
-      const cities = Object.values(state.cells).filter(c => c.city && c.city.nation === p.id);
-      const units = state.units.filter(u => u.owner === p.id && u.hp > 0);
-      if (cities.length === 0 && units.length === 0) p.alive = false;
-    }
-    const alive = state.players.filter(p => p.alive);
-    // Capitals: if human lost all capitals
-    const human = state.players[0];
-    const humanCaps = Object.values(state.cells).filter(c => c.city && c.city.capital && c.city.nation === human.id);
-    if (!human.alive || humanCaps.length === 0 && !Object.values(state.cells).some(c => c.city && c.city.nation === human.id)) {
-      // only lose if no cities at all
-      if (!Object.values(state.cells).some(c => c.city && c.city.nation === human.id)) {
-        state.phase = "lost";
-        state.winner = null;
-        log("Defeat. Your nation has collapsed.");
-        return;
-      }
-    }
-    // Win: only human alive among players, OR human holds all original enemy capitals
-    if (alive.length === 1 && alive[0].id === human.id) {
-      state.phase = "won";
-      state.winner = human.id;
-      log("Victory! The front is yours.");
-      return;
-    }
-    // Alternate: control every capital on the map
-    const capitals = Object.values(state.cells).filter(c => c.city && c.city.capital);
-    if (capitals.length && capitals.every(c => c.city.nation === human.id)) {
-      state.phase = "won";
-      state.winner = human.id;
-      log("Victory! All capitals seized.");
-    }
-  }
-
-  return {
-    create, get, selectHex, produce, research, endTurn,
-    activePlayer, unitAt, enemyAt, cell, refreshHints, makeUnit, log,
-    reachable, attackTargets, doMove, doAttack, incomeFor, checkVictory
-  };
+  wire();
+  renderSetup();
 })();
