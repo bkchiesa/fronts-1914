@@ -244,6 +244,304 @@
     ctx.closePath();
   }
 
+  const motionQ = [];
+  let active = null;
+  let rafOn = false;
+  const reduceMotion = window.matchMedia && window.matchMedia("(prefers-reduced-motion: reduce)").matches;
+  let hintStamp = "";
+  let hintAt = 0;
+
+  function ms(n) { return reduceMotion ? 1 : n; }
+  function clamp01(t) { return t < 0 ? 0 : t > 1 ? 1 : t; }
+  function easeOut(t) { t = clamp01(t); return 1 - Math.pow(1 - t, 3); }
+
+  function installMotionHooks() {
+    const rawMove = Rules.moveUnit;
+    const rawAttack = Rules.attack;
+    const rawTrain = Rules.train;
+    Rules.moveUnit = function (state, unitId, q, r) {
+      const unit = state.units.find(function (u) { return u.id === unitId; });
+      const path = unit ? Rules.route(state, unit, q, r) : null;
+      const res = rawMove.apply(Rules, arguments);
+      if (res && res.ok && res.moved && path && path.length > 1) {
+        const steps = path.length - 1;
+        const slide = ms(Math.max(220, Math.min(420, 180 + steps * 70)));
+        motionQ.push({
+          kind: "move", id: unitId, path: path, slide: slide,
+          dur: res.captured ? slide + ms(80) : slide,
+          captured: !!res.captured, cq: q, cr: r
+        });
+      }
+      return res;
+    };
+    Rules.attack = function (state, unitId, targetId) {
+      const unit = state.units.find(function (u) { return u.id === unitId; });
+      const target = state.units.find(function (u) { return u.id === targetId; });
+      const from = unit ? { q: unit.q, r: unit.r } : null;
+      const snap = target ? {
+        id: target.id, type: target.type, owner: target.owner,
+        q: target.q, r: target.r, hp: target.hp, maxHp: target.maxHp
+      } : null;
+      const attackerSnap = unit ? {
+        id: unit.id, type: unit.type, owner: unit.owner,
+        q: unit.q, r: unit.r, hp: unit.hp, maxHp: unit.maxHp
+      } : null;
+      const res = rawAttack.apply(Rules, arguments);
+      if (res && res.ok && from && snap) {
+        const after = state.units.find(function (u) { return u.id === unitId; });
+        const to = after ? { q: after.q, r: after.r } : { q: from.q, r: from.r };
+        const advanced = to.q !== from.q || to.r !== from.r;
+        motionQ.push({
+          kind: "attack", id: unitId, from: from, to: to, target: snap,
+          killed: !!res.killed, attackerDied: !!res.attackerDied,
+          attackerSnap: attackerSnap,
+          advanced: advanced, captured: !!res.captured,
+          cq: snap.q, cr: snap.r,
+          dur: ms(420)
+        });
+      }
+      return res;
+    };
+    Rules.train = function (state, nationId, cq, cr, unitId) {
+      const res = rawTrain.apply(Rules, arguments);
+      if (res && res.ok && res.unit) {
+        motionQ.push({
+          kind: "spawn", id: res.unit.id, q: res.unit.q, r: res.unit.r,
+          dur: ms(300)
+        });
+      }
+      return res;
+    };
+  }
+
+  function playHead() {
+    if (active && active.wait) return active.wait;
+    if (!motionQ.length) return Promise.resolve();
+    const m = motionQ.shift();
+    m.t0 = performance.now();
+    active = m;
+    kick();
+    m.wait = new Promise(function (resolve) {
+      let settled = false;
+      function finish() {
+        if (settled) return;
+        settled = true;
+        if (active === m) active = null;
+        resolve();
+      }
+      m.done = finish;
+      setTimeout(finish, m.dur + 60);
+    });
+    return m.wait;
+  }
+
+  async function drainMotions() {
+    while (motionQ.length || active) await playHead();
+  }
+
+  function wantFrames() {
+    if (!game) return false;
+    const board = document.getElementById("game");
+    if (!board || board.classList.contains("hidden")) return false;
+    if (active) return true;
+    if (selectedId != null) return true;
+    if (hintAt && performance.now() - hintAt < 280) return true;
+    return false;
+  }
+
+  function kick() {
+    if (rafOn) return;
+    if (!wantFrames() && !motionQ.length) return;
+    rafOn = true;
+    const frame = function () {
+      const now = performance.now();
+      if (active && now >= active.t0 + active.dur) {
+        const done = active.done;
+        active = null;
+        if (done) done();
+      }
+      if (game) draw();
+      if (wantFrames()) requestAnimationFrame(frame);
+      else rafOn = false;
+    };
+    requestAnimationFrame(frame);
+  }
+
+  function hintAlpha(reach, attacks) {
+    let sig = "";
+    if (selectedId != null) {
+      sig = String(selectedId);
+      reach.forEach(function (cost, k) { if (cost) sig += "|" + k; });
+      for (let i = 0; i < attacks.length; i++) sig += "|a" + attacks[i].q + "," + attacks[i].r;
+    }
+    if (sig !== hintStamp) {
+      hintStamp = sig;
+      hintAt = performance.now();
+    }
+    if (!sig) return 0;
+    return easeOut((performance.now() - hintAt) / ms(240));
+  }
+
+  function samplePath(path, t) {
+    const pts = [];
+    for (let i = 0; i < path.length; i++) pts.push(hexCenter(path[i].q, path[i].r));
+    if (pts.length === 1) return pts[0];
+    const seg = [];
+    let total = 0;
+    for (let i = 1; i < pts.length; i++) {
+      const len = Math.hypot(pts[i].x - pts[i - 1].x, pts[i].y - pts[i - 1].y) || 1;
+      seg.push(len);
+      total += len;
+    }
+    let dist = clamp01(t) * total;
+    for (let i = 1; i < pts.length; i++) {
+      if (dist <= seg[i - 1]) {
+        const k = dist / seg[i - 1];
+        return {
+          x: pts[i - 1].x + (pts[i].x - pts[i - 1].x) * k,
+          y: pts[i - 1].y + (pts[i].y - pts[i - 1].y) * k
+        };
+      }
+      dist -= seg[i - 1];
+    }
+    return pts[pts.length - 1];
+  }
+
+  function spawnWaiting(id) {
+    for (let i = 0; i < motionQ.length; i++) {
+      if (motionQ[i].kind === "spawn" && motionQ[i].id === id) return true;
+    }
+    return false;
+  }
+
+  function poseOf(u, now) {
+    const home = hexCenter(u.q, u.r);
+    const pose = { x: home.x, y: home.y, alpha: 1, scale: 1 };
+    if (!active) return pose;
+    if (active.kind === "move" && active.id === u.id) {
+      const t = easeOut((now - active.t0) / active.slide);
+      const p = samplePath(active.path, t);
+      pose.x = p.x; pose.y = p.y;
+    } else if (active.kind === "spawn" && active.id === u.id) {
+      const t = easeOut((now - active.t0) / active.dur);
+      pose.scale = 0.15 + 0.85 * t;
+      pose.alpha = Math.min(1, t * 1.4);
+    } else if (active.kind === "attack" && active.id === u.id && !active.attackerDied) {
+      const t = now - active.t0;
+      const lunge = ms(170);
+      const a = hexCenter(active.from.q, active.from.r);
+      const b = hexCenter(active.target.q, active.target.r);
+      if (t < lunge) {
+        const k = Math.sin(clamp01(t / lunge) * Math.PI);
+        pose.x = a.x + (b.x - a.x) * 0.32 * k;
+        pose.y = a.y + (b.y - a.y) * 0.32 * k;
+      } else if (active.advanced) {
+        const e = easeOut((t - lunge) / ms(230));
+        const dest = hexCenter(active.to.q, active.to.r);
+        pose.x = a.x + (dest.x - a.x) * e;
+        pose.y = a.y + (dest.y - a.y) * e;
+      }
+    }
+    return pose;
+  }
+
+  function paintUnit(spec, nat, x, y, size, alpha, scale, hp, maxHp) {
+    ctx.save();
+    ctx.translate(x, y);
+    ctx.scale(scale, scale);
+    ctx.globalAlpha = alpha;
+    const plate = unitPath(nat.id, spec.id);
+    if (plate && spriteReady(plate)) ctx.drawImage(art[plate], -size * 0.55, -size * 0.72, size * 1.1, size * 1.1);
+    else {
+      ctx.beginPath();
+      ctx.fillStyle = nat.color;
+      ctx.arc(0, -size * 0.05, size * 0.28, 0, Math.PI * 2);
+      ctx.fill();
+      ctx.fillStyle = "#f4efe4";
+      ctx.font = "bold " + Math.floor(12 * cam.scale) + "px Georgia, serif";
+      ctx.textAlign = "center";
+      ctx.fillText(spec.name.slice(0, 1), 0, size * 0.02);
+    }
+    ctx.restore();
+    if (alpha > 0.05 && maxHp) {
+      const bw = size * 0.5;
+      const ratio = Math.max(0, hp / maxHp);
+      ctx.save();
+      ctx.globalAlpha = alpha;
+      ctx.fillStyle = "#2c2a26";
+      ctx.fillRect(x - bw / 2, y + size * 0.28, bw, 4);
+      ctx.fillStyle = "#7a2e2e";
+      ctx.fillRect(x - bw / 2, y + size * 0.28, bw * ratio, 4);
+      ctx.restore();
+    }
+  }
+
+  function drawGhost(snap, x, y, size, alpha) {
+    if (!snap || alpha <= 0) return;
+    const spec = Rules.UNITS[snap.type];
+    const nat = Rules.NATIONS[snap.owner];
+    if (!spec || !nat) return;
+    paintUnit(spec, nat, x, y, size, alpha, 1, Math.max(0, snap.hp), snap.maxHp);
+  }
+
+  function drawAttackFx(now, size) {
+    if (!active || active.kind !== "attack") return;
+    const t = now - active.t0;
+    const flash0 = ms(60);
+    const flash1 = ms(250);
+    if (t >= flash0 && t <= flash1) {
+      const mid = (flash0 + flash1) / 2;
+      const k = 1 - Math.abs(t - mid) / (mid - flash0);
+      const p = hexCenter(active.target.q, active.target.r);
+      ctx.save();
+      ctx.globalAlpha = Math.max(0, k) * 0.9;
+      ctx.fillStyle = "#f4efe4";
+      ctx.beginPath();
+      ctx.arc(p.x, p.y, size * (0.22 + 0.28 * k), 0, Math.PI * 2);
+      ctx.fill();
+      ctx.strokeStyle = "#7a2e2e";
+      ctx.lineWidth = 3;
+      ctx.beginPath();
+      ctx.arc(p.x, p.y, size * (0.3 + 0.35 * (1 - k)), 0, Math.PI * 2);
+      ctx.stroke();
+      ctx.restore();
+    }
+    if (active.killed) {
+      const fade = 1 - easeOut(clamp01((t - ms(180)) / ms(240)));
+      const p = hexCenter(active.target.q, active.target.r);
+      drawGhost(active.target, p.x, p.y, size, fade);
+    }
+    if (active.attackerDied && active.attackerSnap) {
+      const lunge = ms(170);
+      const a = hexCenter(active.from.q, active.from.r);
+      const b = hexCenter(active.target.q, active.target.r);
+      let x = a.x, y = a.y;
+      if (t < lunge) {
+        const k = Math.sin(clamp01(t / lunge) * Math.PI);
+        x = a.x + (b.x - a.x) * 0.32 * k;
+        y = a.y + (b.y - a.y) * 0.32 * k;
+      }
+      const fade = t < lunge ? 1 : 1 - easeOut(clamp01((t - lunge) / ms(220)));
+      drawGhost(active.attackerSnap, x, y, size, fade);
+    }
+  }
+
+  function drawCapturePulse(c, p, size, now) {
+    if (!active || !active.captured) return;
+    if (c.q !== active.cq || c.r !== active.cr) return;
+    const t = clamp01((now - active.t0) / active.dur);
+    const local = active.kind === "move" ? clamp01((t - 0.62) / 0.38) : clamp01((t - 0.35) / 0.65);
+    if (local <= 0) return;
+    ctx.save();
+    ctx.globalAlpha = (1 - local) * 0.85;
+    ctx.strokeStyle = "#c2b280";
+    ctx.lineWidth = 3;
+    ctx.beginPath();
+    ctx.arc(p.x, p.y - size * 0.05, size * (0.28 + local * 0.62), 0, Math.PI * 2);
+    ctx.stroke();
+    ctx.restore();
+  }
+
   function drawFallbackTerrain(terrain, cx, cy, size) {
     const t = Rules.TERRAIN[terrain] || Rules.TERRAIN.plains;
     ctx.fillStyle = t.color;
@@ -290,6 +588,7 @@
 
   function draw() {
     if (!game) return;
+    const now = performance.now();
     const w = canvas.clientWidth || 800;
     const h = canvas.clientHeight || 600;
     ctx.clearRect(0, 0, w, h);
@@ -340,35 +639,34 @@
         ctx.textAlign = "center";
         ctx.fillText(c.city.name, p.x, p.y + size * 0.42);
       }
+      drawCapturePulse(c, p, size, now);
     }
     for (let i = 0; i < game.units.length; i++) {
       const u = game.units[i];
-      const p = hexCenter(u.q, u.r);
+      if (spawnWaiting(u.id)) continue;
       const spec = Rules.UNITS[u.type];
       const nat = Rules.NATIONS[u.owner];
-      const plate = unitPath(u.owner, u.type);
-      if (plate && spriteReady(plate)) ctx.drawImage(art[plate], p.x - size * 0.55, p.y - size * 0.72, size * 1.1, size * 1.1);
-      else {
-        ctx.beginPath();
-        ctx.fillStyle = nat.color;
-        ctx.arc(p.x, p.y - size * 0.05, size * 0.28, 0, Math.PI * 2);
-        ctx.fill();
-        ctx.fillStyle = "#f4efe4";
-        ctx.font = "bold " + Math.floor(12 * cam.scale) + "px Georgia, serif";
-        ctx.textAlign = "center";
-        ctx.fillText(spec.name.slice(0, 1), p.x, p.y);
-      }
-      const bw = size * 0.5;
-      ctx.fillStyle = "#2c2a26";
-      ctx.fillRect(p.x - bw / 2, p.y + size * 0.28, bw, 4);
-      ctx.fillStyle = "#7a2e2e";
-      ctx.fillRect(p.x - bw / 2, p.y + size * 0.28, bw * Math.max(0, u.hp / u.maxHp), 4);
+      const pose = poseOf(u, now);
+      paintUnit(spec, nat, pose.x, pose.y, size, pose.alpha, pose.scale, u.hp, u.maxHp);
     }
+    drawAttackFx(now, size);
+    const fade = hintAlpha(reach, attacks);
     const sel = selectedUnit();
     if (sel) {
-      const p = hexCenter(sel.q, sel.r);
-      drawOverlay("overlay_select", p.x, p.y, size, "rgba(194,178,128,0.45)");
+      const pose = poseOf(sel, now);
+      const pulse = 0.62 + 0.38 * Math.sin(now / 190);
+      ctx.save();
+      ctx.globalAlpha = pulse;
+      drawOverlay("overlay_select", pose.x, pose.y, size, "rgba(194,178,128,0.45)");
+      ctx.strokeStyle = "rgba(194,178,128," + (0.35 + 0.4 * pulse) + ")";
+      ctx.lineWidth = 2;
+      ctx.beginPath();
+      ctx.arc(pose.x, pose.y, size * (0.42 + 0.08 * pulse), 0, Math.PI * 2);
+      ctx.stroke();
+      ctx.restore();
     }
+    ctx.save();
+    ctx.globalAlpha = fade;
     reach.forEach(function (cost, k) {
       if (cost === 0) return;
       const h = Hex.parse(k);
@@ -379,6 +677,8 @@
       const p = hexCenter(attacks[i].q, attacks[i].r);
       drawOverlay("overlay_attack", p.x, p.y, size, "rgba(122,46,46,0.4)");
     }
+    ctx.restore();
+    if (wantFrames()) kick();
   }
 
   function drawOverlay(name, x, y, size, fallback) {
@@ -545,12 +845,14 @@
     const me = current();
     if (btn.dataset.train) {
       if (!focus) return;
+      busy = true;
       const res = Rules.train(game, me.id, focus.q, focus.r, btn.dataset.train);
-      if (!res.ok) { note(res.reason); return; }
+      if (!res.ok) { busy = false; note(res.reason); return; }
       const cell = game.cells[Rules.key(focus.q, focus.r)];
       Rules.pushLog(game, Rules.NATIONS[me.id].name + " trains " + Rules.UNITS[btn.dataset.train].name.toLowerCase() + " in " + cell.city.name);
       note("");
-      afterAction();
+      renderSide();
+      drainMotions().then(function () { busy = false; afterAction(); });
     } else if (btn.dataset.tech) {
       const res = Rules.research(game, me.id, btn.dataset.tech);
       if (!res.ok) { note(res.reason); return; }
@@ -589,32 +891,32 @@
     const k = Rules.key(h.q, h.r);
     if (myTurn() && selectedUnit() && attacks.some(function (t) { return t.q === h.q && t.r === h.r; })) {
       const target = Rules.unitAt(game, h.q, h.r);
+      busy = true;
       const res = Rules.attack(game, selectedUnit().id, target.id);
-      if (!res.ok) note(res.reason);
-      else {
-        note("");
-        const who = Rules.NATIONS[me.id].name;
-        Rules.pushLog(game, who + " attacks (" + res.dmg + " damage" + (res.killed ? ", destroyed" : "") + (res.attackerDied ? ", lost the unit" : "") + ")");
-        if (res.captured) {
-          const city = game.cells[k].city;
-          if (city) Rules.pushLog(game, who + " captures " + city.name);
-        }
-        if (res.attackerDied) selectedId = null;
+      if (!res.ok) { busy = false; note(res.reason); return; }
+      note("");
+      const who = Rules.NATIONS[me.id].name;
+      Rules.pushLog(game, who + " attacks (" + res.dmg + " damage" + (res.killed ? ", destroyed" : "") + (res.attackerDied ? ", lost the unit" : "") + ")");
+      if (res.captured) {
+        const city = game.cells[k].city;
+        if (city) Rules.pushLog(game, who + " captures " + city.name);
       }
-      afterAction();
+      if (res.attackerDied) selectedId = null;
+      renderSide();
+      drainMotions().then(function () { busy = false; afterAction(); });
       return;
     }
     if (myTurn() && selectedUnit() && reach.has(k) && reach.get(k) > 0) {
+      busy = true;
       const res = Rules.moveUnit(game, selectedUnit().id, h.q, h.r);
-      if (!res.ok) note(res.reason);
-      else {
-        note("");
-        if (res.captured) {
-          const city = cell.city;
-          Rules.pushLog(game, Rules.NATIONS[me.id].name + " captures " + (city ? city.name : "the city"));
-        }
+      if (!res.ok) { busy = false; note(res.reason); return; }
+      note("");
+      if (res.captured) {
+        const city = cell.city;
+        Rules.pushLog(game, Rules.NATIONS[me.id].name + " captures " + (city ? city.name : "the city"));
       }
-      afterAction();
+      renderSide();
+      drainMotions().then(function () { busy = false; afterAction(); });
       return;
     }
     const unit = Rules.unitAt(game, h.q, h.r);
@@ -623,6 +925,7 @@
     else selectedId = null;
     renderSide();
     draw();
+    kick();
   }
 
   async function playUntilHuman() {
@@ -651,12 +954,14 @@
     renderSide();
     try {
       for (const line of FrontAI.steps(game)) {
+        if (motionQ.length) await playHead();
         Rules.pushLog(game, line);
         renderSide();
         draw();
-        await sleep(180);
+        if (!motionQ.length && !active) await sleep(90);
         if (game.winner) break;
       }
+      while (motionQ.length || active) await playHead();
     } catch (err) {
       console.error(err);
       Rules.pushLog(game, "The staff missed its orders. The turn ends.");
@@ -829,6 +1134,7 @@
   }
 
   function wire() {
+    installMotionHooks();
     bindSplash();
     document.getElementById("mode-solo").onclick = function () { hotseat = false; renderSetup(); };
     document.getElementById("mode-hot").onclick = function () { hotseat = true; renderSetup(); };

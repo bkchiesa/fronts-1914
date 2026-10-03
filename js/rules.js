@@ -177,6 +177,55 @@
     return stay;
   }
 
+  /* Hexes from the unit's current hex to (q, r), including water it may only cross.
+     Call before moveUnit. Falls back to a straight pair if the goal is unreachable. */
+  function route(state, unit, q, r) {
+    const start = key(unit.q, unit.r);
+    const goal = key(q, r);
+    if (start === goal) return [{ q: unit.q, r: unit.r }];
+    const best = new Map();
+    const prev = new Map();
+    best.set(start, 0);
+    const pq = [{ k: start, c: 0 }];
+    while (pq.length) {
+      pq.sort(function (a, b) { return a.c - b.c; });
+      const cur = pq.shift();
+      if (cur.c !== best.get(cur.k)) continue;
+      if (cur.k === goal) break;
+      const here = Hex.parse(cur.k);
+      const neigh = Hex.neighbors(here.q, here.r);
+      for (let i = 0; i < neigh.length; i++) {
+        const n = neigh[i];
+        const nk = key(n.q, n.r);
+        const cell = state.cells[nk];
+        if (!cell) continue;
+        if (occupied(state, n.q, n.r, unit.id)) continue;
+        const step = moveCost(unit, cell);
+        if (!isFinite(step)) continue;
+        const nc = cur.c + step;
+        if (nc > unit.move) continue;
+        if (!best.has(nk) || nc < best.get(nk)) {
+          best.set(nk, nc);
+          prev.set(nk, cur.k);
+          pq.push({ k: nk, c: nc });
+        }
+      }
+    }
+    if (!prev.has(goal) && start !== goal) return [{ q: unit.q, r: unit.r }, { q: q, r: r }];
+    const path = [];
+    let k = goal;
+    const guard = {};
+    while (k && !guard[k]) {
+      guard[k] = true;
+      const h = Hex.parse(k);
+      path.push({ q: h.q, r: h.r });
+      if (k === start) break;
+      k = prev.get(k);
+    }
+    path.reverse();
+    return path;
+  }
+
   function attackOf(state, unit) {
     const spec = specOf(unit);
     const cell = cellAt(state, unit.q, unit.r);
@@ -562,6 +611,7 @@
     moveCost: moveCost,
     canStay: canStay,
     reachable: reachable,
+    route: route,
     attackOf: attackOf,
     defenseOf: defenseOf,
     strikeDamage: strikeDamage,
