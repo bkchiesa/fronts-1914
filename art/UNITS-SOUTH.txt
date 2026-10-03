@@ -1,0 +1,36 @@
+Meridian Fronts unit sprites - south set
+Generated: none
+Destination directory: /workspace/ww1-fronts/art/units/
+
+FAILURE
+GetDynamicTools namespace=cursor toolName=GenerateImage: Tool not available
+CallDynamicTool namespace=cursor toolName=GenerateImage (ot-infantry.png, aspect_ratio 1:1): Tool not available
+Retry of the same CallDynamicTool: Tool not available
+No image bytes were returned. No PNG files were written. Nothing was resized.
+
+Expected files not produced:
+/workspace/ww1-fronts/art/units/ot-infantry.png
+/workspace/ww1-fronts/art/units/ot-cavalry.png
+/workspace/ww1-fronts/art/units/ot-artillery.png
+/workspace/ww1-fronts/art/units/ot-unique.png
+/workspace/ww1-fronts/art/units/ot-battleship.png
+/workspace/ww1-fronts/art/units/it-infantry.png
+/workspace/ww1-fronts/art/units/it-cavalry.png
+/workspace/ww1-fronts/art/units/it-artillery.png
+/workspace/ww1-fronts/art/units/it-unique.png
+/workspace/ww1-fronts/art/units/it-plane.png
+/workspace/ww1-fronts/art/units/us-infantry.png
+/workspace/ww1-fronts/art/units/us-cavalry.png
+/workspace/ww1-fronts/art/units/us-artillery.png
+/workspace/ww1-fronts/art/units/us-unique.png
+/workspace/ww1-fronts/art/units/us-plane.png
+/workspace/ww1-fronts/art/units/rs-infantry.png
+/workspace/ww1-fronts/art/units/rs-cavalry.png
+/workspace/ww1-fronts/art/units/rs-artillery.png
+/workspace/ww1-fronts/art/units/rs-unique.png
+/workspace/ww1-fronts/art/units/rs-balloon.png
+/workspace/ww1-fronts/art/units/be-infantry.png
+/workspace/ww1-fronts/art/units/be-cavalry.png
+/workspace/ww1-fronts/art/units/be-artillery.png
+/workspace/ww1-fronts/art/units/be-unique.png
+/workspace/ww1-fronts/art/units/be-plane.png

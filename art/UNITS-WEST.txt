@@ -1,0 +1,38 @@
+Meridian Fronts - western unit sprites
+Generated: 2026-10-03
+Output dir: /workspace/ww1-fronts/art/units/
+Saved: none
+Pixel sizes: n/a (no files written)
+
+FAILURES (all 25). CallDynamicTool and GenerateImage are not available to this executor.
+GetDynamicTools: Tool not available
+CallDynamicTool namespace=cursor toolName=GenerateImage: Tool not available (tried twice)
+Direct GenerateImage: Tool not available
+MCP server "cursor": not available
+No image files were invented or resized.
+
+- /workspace/ww1-fronts/art/units/gb-infantry.png FAILED
+- /workspace/ww1-fronts/art/units/gb-cavalry.png FAILED
+- /workspace/ww1-fronts/art/units/gb-artillery.png FAILED
+- /workspace/ww1-fronts/art/units/gb-unique.png FAILED
+- /workspace/ww1-fronts/art/units/gb-battleship.png FAILED
+- /workspace/ww1-fronts/art/units/fr-infantry.png FAILED
+- /workspace/ww1-fronts/art/units/fr-cavalry.png FAILED
+- /workspace/ww1-fronts/art/units/fr-artillery.png FAILED
+- /workspace/ww1-fronts/art/units/fr-unique.png FAILED
+- /workspace/ww1-fronts/art/units/fr-plane.png FAILED
+- /workspace/ww1-fronts/art/units/de-infantry.png FAILED
+- /workspace/ww1-fronts/art/units/de-cavalry.png FAILED
+- /workspace/ww1-fronts/art/units/de-artillery.png FAILED
+- /workspace/ww1-fronts/art/units/de-unique.png FAILED
+- /workspace/ww1-fronts/art/units/de-plane.png FAILED
+- /workspace/ww1-fronts/art/units/ah-infantry.png FAILED
+- /workspace/ww1-fronts/art/units/ah-cavalry.png FAILED
+- /workspace/ww1-fronts/art/units/ah-artillery.png FAILED
+- /workspace/ww1-fronts/art/units/ah-unique.png FAILED
+- /workspace/ww1-fronts/art/units/ah-battleship.png FAILED
+- /workspace/ww1-fronts/art/units/ru-infantry.png FAILED
+- /workspace/ww1-fronts/art/units/ru-cavalry.png FAILED
+- /workspace/ww1-fronts/art/units/ru-artillery.png FAILED
+- /workspace/ww1-fronts/art/units/ru-unique.png FAILED
+- /workspace/ww1-fronts/art/units/ru-battleship.png FAILED

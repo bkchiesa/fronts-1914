@@ -1,0 +1,92 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>Fronts, 1914</title>
+  <link rel="stylesheet" href="css/game.css" />
+</head>
+<body>
+  <div id="app">
+    <div id="topBar">
+      <h1>Fronts, 1914</h1>
+      <div id="hud" class="hidden">
+        <span class="hud-stat" id="hudNation">-</span>
+        <span class="hud-stat" id="hudStars">0 ★</span>
+        <span class="hud-stat" id="hudTurn">Turn 1</span>
+        <span class="hud-stat" id="hudMode"></span>
+        <div class="spacer"></div>
+        <button type="button" id="btnTech" class="ghost">Research (T)</button>
+        <button type="button" id="btnEndTurn">End Turn (E)</button>
+        <button type="button" id="btnMenu" class="ghost">Menu</button>
+      </div>
+    </div>
+    <div id="main">
+      <div id="canvasWrap">
+        <canvas id="gameCanvas"></canvas>
+        <div id="aiBanner" class="hidden"></div>
+        <div id="buildPanel" class="hidden"></div>
+        <div id="techPanel" class="hidden">
+          <button type="button" id="techClose" class="hidden">×</button>
+        </div>
+      </div>
+      <aside id="side">
+        <div id="unitCard" class="hidden"></div>
+        <div id="controlsHelp">
+          Click unit to select. Blue hexes: move. Red: attack.<br/>
+          Click own empty city to recruit.<br/>
+          WASD / arrows pan. E end turn. T tech.
+        </div>
+        <h3 style="color:var(--gold);font-size:0.85rem;">Battle Log</h3>
+        <div id="logBox"></div>
+      </aside>
+    </div>
+  </div>
+
+  <div id="menu">
+    <div class="menu-card">
+      <h1>Fronts, 1914</h1>
+      <p class="tagline">Turn-based grand tactics on the Great War fronts.</p>
+      <div class="field">
+        <label>Map</label>
+        <select id="mapSelect"></select>
+        <div id="mapDesc"></div>
+      </div>
+      <div class="field">
+        <label>Nation</label>
+        <select id="nationSelect"></select>
+        <div id="nationPreview" style="margin-top:8px"></div>
+      </div>
+      <div class="field">
+        <label>Mode</label>
+        <select id="modeSelect">
+          <option value="ai">Solo vs AI</option>
+          <option value="hotseat">Hotseat (2 players)</option>
+        </select>
+      </div>
+      <div class="field hidden" id="p2Field">
+        <label>Player 2 nation</label>
+        <select id="nationSelect2"></select>
+      </div>
+      <button type="button" id="btnStart">Begin Campaign</button>
+    </div>
+  </div>
+
+  <div id="endScreen" class="hidden">
+    <div class="menu-card">
+      <h1 id="endTitle">Victory</h1>
+      <p id="endMsg"></p>
+      <button type="button" id="btnAgain" style="margin-top:16px">Return to Menu</button>
+    </div>
+  </div>
+
+  <script src="js/hex.js"></script>
+  <script src="js/data.js"></script>
+  <script src="js/maps.js"></script>
+  <script src="js/art.js"></script>
+  <script src="js/game.js"></script>
+  <script src="js/ai.js"></script>
+  <script src="js/ui.js"></script>
+  <script src="js/main.js"></script>
+</body>
+</html>
