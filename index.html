@@ -34,8 +34,8 @@
     <div id="maplist" class="maps"></div>
     <label class="row">Mode</label>
     <div class="modes">
-      <button type="button" id="mode-solo" class="modebtn on">Solo — you and the other staffs</button>
-      <button type="button" id="mode-hot" class="modebtn">Hotseat — two commanders</button>
+      <button type="button" id="mode-solo" class="modebtn on">Solo: you and the other staffs</button>
+      <button type="button" id="mode-hot" class="modebtn">Hotseat: two commanders</button>
     </div>
     <label class="row" id="p1label">Your nation</label>
     <div id="nats" class="nations"></div>
@@ -47,7 +47,10 @@
 </section>
 
 <section id="game" class="screen hidden">
-  <div id="mapwrap"><canvas id="map"></canvas></div>
+  <div id="mapwrap">
+    <canvas id="map"></canvas>
+    <div id="legend" class="maplegend hidden"></div>
+  </div>
   <aside id="side">
     <header>
       <h1>Fronts, 1914</h1>

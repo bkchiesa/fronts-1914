@@ -373,3 +373,32 @@ label.row { display: block; margin-top: 8px; font-size: 14px; letter-spacing: 0.
   background: var(--desk);
   color: var(--cream);
 }
+
+.maplegend {
+  position: absolute;
+  left: 10px;
+  bottom: 10px;
+  z-index: 2;
+  display: flex;
+  flex-wrap: wrap;
+  gap: 4px 10px;
+  max-width: min(640px, calc(100% - 20px));
+  padding: 6px 8px;
+  background: rgba(230, 223, 208, 0.94);
+  border: 1px solid var(--brass);
+  color: var(--ink);
+  pointer-events: none;
+}
+.maplegend .leg {
+  display: flex;
+  align-items: center;
+  gap: 4px;
+  font-size: 13px;
+  line-height: 1;
+}
+.maplegend img {
+  width: 22px;
+  height: 26px;
+  object-fit: contain;
+  display: block;
+}

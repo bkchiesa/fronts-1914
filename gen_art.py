@@ -220,11 +220,6 @@ for name, color in [("star",(255,210,50)), ("tech",(100,180,255)), ("endturn",(8
         d.ellipse([17,10,22,16], fill=(40,40,40))
     save(img, f"icon_{name}.png")
 
-# Selection / highlight overlays
-for name, col in [("select",(255,255,100,120)), ("move",(80,180,255,100)), ("attack",(255,60,60,120))]:
-    img = Image.new("RGBA", (SIZE, SIZE), (0,0,0,0))
-    d = ImageDraw.Draw(img)
-    hex_mask(d, 32, 32, 28, col, col[:3]+(200,), 2)
-    save(img, f"overlay_{name}.png")
+# Selection / highlight overlays live in gen_tiles.py (pointy hex, soft green move, soft red attack).
 
 print("Done. Files:", len(os.listdir(OUT)))

@@ -16,18 +16,22 @@
   const canvas = document.getElementById("map");
   const ctx = canvas.getContext("2d");
 
-  /* Khaki Plate paths. Loose root unit_*.png and terrain_*.png are not used.
-     Flags stay art/flag_*.png. Hills, desert, and swamp reuse the closest plate. */
+  /* Illustrated pointy-top hexes from gen_tiles.py. Loose root terrain_*.png are not used.
+     Flags stay art/flag_*.png. Each terrain has its own tile.
+     Hex radius (center to vertex) is 128/284 of the image height. */
+  const TERRAIN_RADIUS_FRAC = 128 / 284;
   const TERRAIN_PATH = {
     plains: "art/terrain/plains.png",
     forest: "art/terrain/forest.png",
     mountain: "art/terrain/mountain.png",
     water: "art/terrain/water.png",
     trench: "art/terrain/trench.png",
-    hills: "art/terrain/mountain.png",
-    desert: "art/terrain/plains.png",
-    swamp: "art/terrain/forest.png"
+    hills: "art/terrain/hills.png",
+    desert: "art/terrain/desert.png",
+    swamp: "art/terrain/swamp.png"
   };
+  const LEGEND_ORDER = ["plains", "forest", "mountain", "water", "trench", "hills", "desert", "swamp"];
+  const LEGEND_ALWAYS = { plains: 1, forest: 1, mountain: 1, water: 1, trench: 1 };
   const SETTLEMENT_PATH = {
     city: "art/settlements/city.png",
     capital: "art/settlements/capital.png"
@@ -242,6 +246,16 @@
     ctx.moveTo(pts[0].x, pts[0].y);
     for (let i = 1; i < pts.length; i++) ctx.lineTo(pts[i].x, pts[i].y);
     ctx.closePath();
+  }
+
+  /* Draw a pointy hex sprite. Transparent corners stay transparent; the hex
+     inside the file lines up with pathHex at the given center-to-vertex size. */
+  function drawHexSprite(img, cx, cy, size) {
+    const radiusPx = img.naturalHeight * TERRAIN_RADIUS_FRAC;
+    const scale = size / radiusPx;
+    const dw = img.naturalWidth * scale;
+    const dh = img.naturalHeight * scale;
+    ctx.drawImage(img, cx - dw / 2, cy - dh / 2, dw, dh);
   }
 
   const motionQ = [];
@@ -614,17 +628,15 @@
     for (let i = 0; i < keys.length; i++) {
       const c = game.cells[keys[i]];
       const p = hexCenter(c.q, c.r);
-      pathHex(p.x, p.y, size * 0.98);
       const tname = TERRAIN_PATH[c.terrain] || TERRAIN_PATH.plains;
       if (spriteReady(tname)) {
-        ctx.save();
-        ctx.clip();
-        ctx.drawImage(art[tname], p.x - size, p.y - size, size * 2, size * 2);
-        ctx.restore();
+        drawHexSprite(art[tname], p.x, p.y, size * 1.012);
       } else {
+        pathHex(p.x, p.y, size * 0.98);
         drawFallbackTerrain(c.terrain, p.x, p.y, size);
       }
-      ctx.strokeStyle = "rgba(44,42,38,0.45)";
+      pathHex(p.x, p.y, size * 0.99);
+      ctx.strokeStyle = "rgba(36, 32, 28, 0.72)";
       ctx.lineWidth = 1;
       ctx.stroke();
     }
@@ -633,7 +645,9 @@
       if (!c.city) continue;
       const p = hexCenter(c.q, c.r);
       const mark = c.city.capital ? SETTLEMENT_PATH.capital : SETTLEMENT_PATH.city;
-      if (spriteReady(mark)) ctx.drawImage(art[mark], p.x - size * 0.45, p.y - size * 0.7, size * 0.9, size * 0.9);
+      const box = size * (c.city.capital ? 0.96 : 0.68);
+      const bottom = p.y + size * (c.city.capital ? 0.08 : 0.02);
+      if (spriteReady(mark)) ctx.drawImage(art[mark], p.x - box / 2, bottom - box, box, box);
       else {
         ctx.fillStyle = c.city.capital ? "#c2b280" : "#efe8d8";
         ctx.strokeStyle = "#2c2a26";
@@ -686,11 +700,11 @@
       if (cost === 0) return;
       const h = Hex.parse(k);
       const p = hexCenter(h.q, h.r);
-      drawOverlay("overlay_move", p.x, p.y, size, "rgba(90,122,70,0.35)");
+      drawOverlay("overlay_move", p.x, p.y, size, "rgba(120, 196, 90, 0.55)");
     });
     for (let i = 0; i < attacks.length; i++) {
       const p = hexCenter(attacks[i].q, attacks[i].r);
-      drawOverlay("overlay_attack", p.x, p.y, size, "rgba(122,46,46,0.4)");
+      drawOverlay("overlay_attack", p.x, p.y, size, "rgba(210, 64, 54, 0.58)");
     }
     ctx.restore();
     if (wantFrames()) kick();
@@ -698,11 +712,10 @@
 
   function drawOverlay(name, x, y, size, fallback) {
     if (spriteReady(name)) {
-      ctx.drawImage(art[name], x - size * 0.7, y - size * 0.7, size * 1.4, size * 1.4);
+      drawHexSprite(art[name], x, y, size * 1.012);
     } else {
-      ctx.beginPath();
+      pathHex(x, y, size * 0.96);
       ctx.fillStyle = fallback;
-      ctx.arc(x, y, size * 0.55, 0, Math.PI * 2);
       ctx.fill();
     }
   }
@@ -817,7 +830,7 @@
         const check = Rules.canTrain(game, me.id, cell.q, cell.r, id);
         const why = !unlocked ? "locked" : (!check.ok ? check.reason : "");
         html += '<button type="button" data-train="' + id + '"' + (check.ok ? "" : " disabled") + '>' +
-          spec.name + ' — ' + cost + ' Supply' + (why ? ' <small>(' + escapeHtml(why) + ')</small>' : '') +
+          spec.name + ', ' + cost + ' Supply' + (why ? ' <small>(' + escapeHtml(why) + ')</small>' : '') +
           '</button>';
       }
       html += '</div>';
@@ -840,7 +853,7 @@
       else if (!check.ok) extra = check.reason;
       html += '<button type="button" data-tech="' + tech.id + '"' + (check.ok && me.human ? "" : " disabled") +
         ' title="' + escapeHtml(tech.desc) + '">' +
-        tech.name + ' — ' + tech.cost + ' Supply' + (extra ? ' <small>(' + escapeHtml(extra) + ')</small>' : '') +
+        tech.name + ', ' + tech.cost + ' Supply' + (extra ? ' <small>(' + escapeHtml(extra) + ')</small>' : '') +
         '</button>';
     }
     html += '</div></section>';
@@ -1025,6 +1038,22 @@
     draw();
   }
 
+  function renderLegend() {
+    const el = document.getElementById("legend");
+    if (!el || !game) return;
+    const used = {};
+    const keys = Object.keys(game.cells);
+    for (let i = 0; i < keys.length; i++) used[game.cells[keys[i]].terrain] = 1;
+    let html = "";
+    for (let i = 0; i < LEGEND_ORDER.length; i++) {
+      const id = LEGEND_ORDER[i];
+      if (!LEGEND_ALWAYS[id] && !used[id]) continue;
+      html += '<span class="leg"><img alt="" src="' + TERRAIN_PATH[id] + '"><span>' + id + "</span></span>";
+    }
+    el.innerHTML = html;
+    el.classList.remove("hidden");
+  }
+
   function startGame() {
     const map = Maps.get(mapId);
     const humans = hotseat ? [pick1, pick2] : [pick1];
@@ -1052,6 +1081,7 @@
     busy = false;
     document.getElementById("setup").classList.add("hidden");
     document.getElementById("game").classList.remove("hidden");
+    renderLegend();
     document.getElementById("victory").classList.add("hidden");
     document.getElementById("pass").classList.add("hidden");
     const p = current();
@@ -1078,6 +1108,8 @@
     document.getElementById("pass").classList.add("hidden");
     document.getElementById("help").classList.add("hidden");
     document.getElementById("setup").classList.remove("hidden");
+    const legend = document.getElementById("legend");
+    if (legend) legend.classList.add("hidden");
   }
 
   function renderSetup() {
