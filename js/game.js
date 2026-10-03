@@ -261,21 +261,29 @@
     const rawTrain = Rules.train;
     Rules.moveUnit = function (state, unitId, q, r) {
       const unit = state.units.find(function (u) { return u.id === unitId; });
+      const unitType = unit ? unit.type : "";
       const path = unit ? Rules.route(state, unit, q, r) : null;
       const res = rawMove.apply(Rules, arguments);
-      if (res && res.ok && res.moved && path && path.length > 1) {
-        const steps = path.length - 1;
-        const slide = ms(Math.max(220, Math.min(420, 180 + steps * 70)));
-        motionQ.push({
-          kind: "move", id: unitId, path: path, slide: slide,
-          dur: res.captured ? slide + ms(80) : slide,
-          captured: !!res.captured, cq: q, cr: r
-        });
+      if (res && res.ok && res.moved) {
+        if (window.FrontAudio) {
+          FrontAudio.playMove(unitType);
+          if (res.captured) FrontAudio.playCapture();
+        }
+        if (path && path.length > 1) {
+          const steps = path.length - 1;
+          const slide = ms(Math.max(220, Math.min(420, 180 + steps * 70)));
+          motionQ.push({
+            kind: "move", id: unitId, path: path, slide: slide,
+            dur: res.captured ? slide + ms(80) : slide,
+            captured: !!res.captured, cq: q, cr: r
+          });
+        }
       }
       return res;
     };
     Rules.attack = function (state, unitId, targetId) {
       const unit = state.units.find(function (u) { return u.id === unitId; });
+      const unitType = unit ? unit.type : "";
       const target = state.units.find(function (u) { return u.id === targetId; });
       const from = unit ? { q: unit.q, r: unit.r } : null;
       const snap = target ? {
@@ -287,6 +295,12 @@
         q: unit.q, r: unit.r, hp: unit.hp, maxHp: unit.maxHp
       } : null;
       const res = rawAttack.apply(Rules, arguments);
+      if (res && res.ok) {
+        if (window.FrontAudio) {
+          FrontAudio.playAttack(unitType);
+          if (res.captured) FrontAudio.playCapture();
+        }
+      }
       if (res && res.ok && from && snap) {
         const after = state.units.find(function (u) { return u.id === unitId; });
         const to = after ? { q: after.q, r: after.r } : { q: from.q, r: from.r };
@@ -305,6 +319,7 @@
     Rules.train = function (state, nationId, cq, cr, unitId) {
       const res = rawTrain.apply(Rules, arguments);
       if (res && res.ok && res.unit) {
+        if (window.FrontAudio) FrontAudio.playRecruit(res.unit.type);
         motionQ.push({
           kind: "spawn", id: res.unit.id, q: res.unit.q, r: res.unit.r,
           dur: ms(300)
@@ -847,7 +862,12 @@
       if (!focus) return;
       busy = true;
       const res = Rules.train(game, me.id, focus.q, focus.r, btn.dataset.train);
-      if (!res.ok) { busy = false; note(res.reason); return; }
+      if (!res.ok) {
+        busy = false;
+        note(res.reason);
+        if (window.FrontAudio) FrontAudio.playUi();
+        return;
+      }
       const cell = game.cells[Rules.key(focus.q, focus.r)];
       Rules.pushLog(game, Rules.NATIONS[me.id].name + " trains " + Rules.UNITS[btn.dataset.train].name.toLowerCase() + " in " + cell.city.name);
       note("");
@@ -855,7 +875,12 @@
       drainMotions().then(function () { busy = false; afterAction(); });
     } else if (btn.dataset.tech) {
       const res = Rules.research(game, me.id, btn.dataset.tech);
-      if (!res.ok) { note(res.reason); return; }
+      if (!res.ok) {
+        note(res.reason);
+        if (window.FrontAudio) FrontAudio.playUi();
+        return;
+      }
+      if (window.FrontAudio) FrontAudio.playUi("confirm");
       Rules.pushLog(game, Rules.NATIONS[me.id].name + " researches " + Rules.TECHS[btn.dataset.tech].name);
       note("");
       afterAction();
@@ -883,7 +908,7 @@
     if (!game || busy) return;
     const h = screenHex(ev);
     const cell = game.cells[Rules.key(h.q, h.r)];
-    if (!cell) { note("Off the map."); return; }
+    if (!cell) { note("Off the map."); if (window.FrontAudio) FrontAudio.playUi(); return; }
     focus = { q: h.q, r: h.r };
     const me = current();
     const reach = selectedReach();
@@ -893,7 +918,7 @@
       const target = Rules.unitAt(game, h.q, h.r);
       busy = true;
       const res = Rules.attack(game, selectedUnit().id, target.id);
-      if (!res.ok) { busy = false; note(res.reason); return; }
+      if (!res.ok) { busy = false; note(res.reason); if (window.FrontAudio) FrontAudio.playUi(); return; }
       note("");
       const who = Rules.NATIONS[me.id].name;
       Rules.pushLog(game, who + " attacks (" + res.dmg + " damage" + (res.killed ? ", destroyed" : "") + (res.attackerDied ? ", lost the unit" : "") + ")");
@@ -909,7 +934,7 @@
     if (myTurn() && selectedUnit() && reach.has(k) && reach.get(k) > 0) {
       busy = true;
       const res = Rules.moveUnit(game, selectedUnit().id, h.q, h.r);
-      if (!res.ok) { busy = false; note(res.reason); return; }
+      if (!res.ok) { busy = false; note(res.reason); if (window.FrontAudio) FrontAudio.playUi(); return; }
       note("");
       if (res.captured) {
         const city = cell.city;
@@ -923,6 +948,7 @@
     if (unit && me && unit.owner === me.id && myTurn()) selectedId = unit.id;
     else if (unit) selectedId = null;
     else selectedId = null;
+    if (window.FrontAudio) FrontAudio.playSelect();
     renderSide();
     draw();
     kick();
@@ -980,6 +1006,16 @@
   function showVictory() {
     const id = game.winner;
     const nat = id ? Rules.NATIONS[id] : null;
+    if (window.FrontAudio) {
+      let humanWin = false;
+      if (id && game.players) {
+        for (let i = 0; i < game.players.length; i++) {
+          if (game.players[i].id === id && game.players[i].human) humanWin = true;
+        }
+      }
+      if (humanWin) FrontAudio.playVictory();
+      else FrontAudio.playDefeat();
+    }
     const text = document.getElementById("victorytext");
     if (nat) text.innerHTML = flagHTML(id) + " <strong>" + nat.name + "</strong> holds the field.";
     else text.textContent = "The front falls quiet. No nation remains.";
@@ -992,13 +1028,22 @@
   function startGame() {
     const map = Maps.get(mapId);
     const humans = hotseat ? [pick1, pick2] : [pick1];
-    if (!pick1 || humans.indexOf(null) !== -1) { document.getElementById("setupnote").textContent = "Choose a nation."; return; }
-    if (hotseat && pick1 === pick2) { document.getElementById("setupnote").textContent = "The two commanders must differ."; return; }
+    if (!pick1 || humans.indexOf(null) !== -1) {
+      document.getElementById("setupnote").textContent = "Choose a nation.";
+      if (window.FrontAudio) FrontAudio.playUi();
+      return;
+    }
+    if (hotseat && pick1 === pick2) {
+      document.getElementById("setupnote").textContent = "The two commanders must differ.";
+      if (window.FrontAudio) FrontAudio.playUi();
+      return;
+    }
     try {
       game = Rules.createGame(map, humans);
     } catch (err) {
       console.error(err);
       document.getElementById("setupnote").textContent = "This map could not be opened.";
+      if (window.FrontAudio) FrontAudio.playUi();
       return;
     }
     selectedId = null;
@@ -1011,6 +1056,10 @@
     document.getElementById("pass").classList.add("hidden");
     const p = current();
     Rules.pushLog(game, Rules.NATIONS[p.id].name + " opens the campaign.");
+    if (window.FrontAudio) {
+      FrontAudio.playUi("confirm");
+      FrontAudio.startMatch();
+    }
     requestAnimationFrame(function () {
       resize();
       fitCamera();
@@ -1021,6 +1070,7 @@
   }
 
   function toSetup() {
+    if (window.FrontAudio) FrontAudio.startTitle();
     busy = false;
     game = null;
     document.getElementById("game").classList.add("hidden");
@@ -1064,10 +1114,15 @@
 
   function bindSetup() {
     document.querySelectorAll("[data-map]").forEach(function (b) {
-      b.onclick = function () { mapId = b.dataset.map; renderSetup(); };
+      b.onclick = function () {
+        if (window.FrontAudio) { FrontAudio.startTitle(); FrontAudio.playUi(); }
+        mapId = b.dataset.map;
+        renderSetup();
+      };
     });
     document.querySelectorAll("[data-nat]").forEach(function (b) {
       b.onclick = function () {
+        if (window.FrontAudio) { FrontAudio.startTitle(); FrontAudio.playUi(); }
         if (b.dataset.slot === "1") pick1 = b.dataset.nat;
         else pick2 = b.dataset.nat;
         renderSetup();
@@ -1119,10 +1174,14 @@
     });
     splash.addEventListener("click", function (e) {
       if (e.target.closest("#btnBegin")) return;
-      if (!settled) settle();
+      if (!settled) {
+        if (window.FrontAudio) { FrontAudio.playUi(); FrontAudio.startTitle(); }
+        settle();
+      }
     });
     document.getElementById("btnBegin").onclick = function (e) {
       e.stopPropagation();
+      if (window.FrontAudio) { FrontAudio.playUi("confirm"); FrontAudio.startTitle(); }
       settle();
       splash.classList.add("is-leaving");
       const setup = document.getElementById("setup");
@@ -1136,24 +1195,46 @@
   function wire() {
     installMotionHooks();
     bindSplash();
-    document.getElementById("mode-solo").onclick = function () { hotseat = false; renderSetup(); };
-    document.getElementById("mode-hot").onclick = function () { hotseat = true; renderSetup(); };
+    document.getElementById("mode-solo").onclick = function () {
+      if (window.FrontAudio) { FrontAudio.startTitle(); FrontAudio.playUi(); }
+      hotseat = false;
+      renderSetup();
+    };
+    document.getElementById("mode-hot").onclick = function () {
+      if (window.FrontAudio) { FrontAudio.startTitle(); FrontAudio.playUi(); }
+      hotseat = true;
+      renderSetup();
+    };
     document.getElementById("startbtn").onclick = startGame;
     document.getElementById("endturn").onclick = function () {
       if (!game || busy || game.winner) return;
       const p = current();
       if (!p || !p.human) return;
+      if (window.FrontAudio) FrontAudio.playUi("confirm");
       endedBy = p.id;
       Rules.pushLog(game, Rules.NATIONS[p.id].name + " ends the turn.");
       Rules.endTurn(game);
       if (game.winner) { showVictory(); return; }
       playUntilHuman();
     };
-    document.getElementById("helpbtn").onclick = function () { document.getElementById("help").classList.remove("hidden"); };
-    document.getElementById("helpclose").onclick = function () { document.getElementById("help").classList.add("hidden"); };
-    document.getElementById("resign").onclick = toSetup;
-    document.getElementById("againbtn").onclick = toSetup;
+    document.getElementById("helpbtn").onclick = function () {
+      if (window.FrontAudio) FrontAudio.playUi();
+      document.getElementById("help").classList.remove("hidden");
+    };
+    document.getElementById("helpclose").onclick = function () {
+      if (window.FrontAudio) FrontAudio.playUi();
+      document.getElementById("help").classList.add("hidden");
+    };
+    document.getElementById("resign").onclick = function () {
+      if (window.FrontAudio) FrontAudio.playUi();
+      toSetup();
+    };
+    document.getElementById("againbtn").onclick = function () {
+      if (window.FrontAudio) FrontAudio.playUi();
+      toSetup();
+    };
     document.getElementById("passbtn").onclick = function () {
+      if (window.FrontAudio) FrontAudio.playUi("confirm");
       document.getElementById("pass").classList.add("hidden");
       endedBy = current() ? current().id : endedBy;
       renderSide();
